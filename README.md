@@ -13,9 +13,8 @@
   * [Register an Event](BRBCORE.md#register-an-event)
   * [Start Event Loop](BRBCORE.md#start-event-loop)
   * [Summary](BRBCORE.md#summary)
-* [Build & Install](#build--install)
 * [Origin & References](#origin--references)
-* [License](#license)
+* [Work](#work)
 
 
 # Introduction
@@ -24,14 +23,21 @@
 
 For now we are publishing the [libbrb_core](BRBCORE.md). 
 
-The main library is the core. That contains an abstraction for an event-oriented base, using kqueue (https://www.freebsd.org/cgi/man.cgi?kqueue).
+The main library is the [libbrb_core](BRBCORE.md). That contains an abstraction for an event-oriented base, using kqueue (https://www.freebsd.org/cgi/man.cgi?kqueue).
 
 Origin & References
 -------------------
 
-[libbrb_core][] is developed and maintained by [BrByte][https://brbyte.com]. It is built for and developed on FreeBSD system, patches to are most welcome.
+[libbrb_core](BRBCORE.md) is developed and maintained by BrByte (https://software.brbyte.com).
+
+It is built for and developed on FreeBSD system, patches to are most welcome.
+
+On Linux you can use libkqueue.  
 
 ## License
 
 This project is licensed under the BSD 2-Clause License - see the [LICENSE.md](LICENSE.md) file for details
 
+## Work
+
+There is more to come.
