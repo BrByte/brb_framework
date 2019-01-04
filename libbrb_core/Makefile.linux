@@ -1,0 +1,130 @@
+#CC=gcc
+#gnu99
+INCLUDE= -I. -I ./include -I /include -I /usr/include -I /usr/include/bits -I /usr/include/kqueue -I /usr/local/include
+LDFLAGS= -shared -std=c99
+CFLAGS 	= -Wall -Wnocomment -pedantic -std=c99
+PROGS	= libbrb_core
+CFLAGS  = -O2 -g $(AC_CFLAGS) $(INCLUDE) -D_GNU_SOURCE -fPIC
+
+XTRA_LIBS 	= -lm -lbsd
+LIBS    	= -L. $(XTRA_LIBS) -L /usr/local/lib
+
+LIBRB_NAME	= libbrb_core
+LIBRB_LIB	= libbrb_core.a
+LIBRB_OBJS	= libbrb_core.so
+
+LIBRB_INCLUDE=\
+		include/libbrb_comm_proto.h \
+		include/libbrb_comm_unix.h \
+		include/libbrb_comm_utils.h \
+		include/libbrb_core.h \
+		include/libbrb_data.h \
+		include/libbrb_ev_aio.h \
+		include/libbrb_ev_kq.h \
+		include/libbrb_ev_comm.h \
+		include/libbrb_ev_core.h \
+		include/libbrb_ev_utils.h \
+		include/libbrb_ev_logger.h \
+		include/libbrb_ev_ipc.h \
+		include/libbrb_thread.h \
+
+LIBRB_SRC=	\
+		comm/core/serial/comm_serial.c \
+		comm/core/ipc/ev_ipc_base.c \
+		comm/core/ipc/ev_ipc_child.c \
+		comm/core/icmp/comm_icmp_base.c \
+		comm/core/tcp/comm_tcp_aio.c \
+		comm/core/tcp/comm_tcp_client_pool.c \
+		comm/core/tcp/comm_tcp_client.c \
+		comm/core/tcp/comm_tcp_server.c \
+		comm/core/tcp/comm_tcp_server_conn.c \
+		comm/core/unix/comm_unix_client_pool.c \
+		comm/core/unix/comm_unix_client.c \
+		comm/core/unix/comm_unix_server.c \
+		comm/core/unix/comm_unix_aio.c \
+		comm/core/comm_dns_resolver.c \
+		comm/core/comm_statistics.c \
+		comm/core/comm_desc_token.c \
+		comm/utils/comm_ftp_client.c \
+		comm/utils/comm_tftp_server.c \
+		comm/utils/comm_tzsp_server.c \
+		comm/utils/comm_ssh_client.c \
+		comm/utils/comm_ssl_utils.c \
+		comm/utils/comm_icmp_pinger.c \
+		crypto/base64.c \
+		crypto/blowfish.c \
+		crypto/md5.c \
+		crypto/rc4.c \
+		crypto/sha1.c \
+		data/core/dlinked_list.c \
+		data/core/dyn_array.c \
+		data/core/dyn_bitmap.c \
+		data/core/hash_table.c \
+		data/core/linked_list.c \
+		data/core/mem_buf.c \
+		data/core/mem_stream.c \
+		data/core/mem_arena.c \
+		data/core/radix_tree.c \
+		data/core/slotqueue.c \
+		data/utils/string_array.c \
+		data/utils/string.c \
+		data/utils/ipv4_table.c \
+		data/utils/utils.c \
+		data/utils/speed_regex.c \
+		data/utils/regex.c \
+		data/utils/assoc_array.c \
+		data/utils/string_assoc_array.c \
+		data/utils/key_value.c \
+		data/utils/queue.c \
+		data/utils/meta_data.c \
+		data/utils/mem_slot.c \
+		data/utils/mem_buf_mapped.c \
+		event/aio/ev_kq_aio_file.c \
+		event/aio/ev_kq_aio_req.c \
+		event/aio/ev_kq_aio_transform.c \
+		event/core/ev_kq_base.c \
+		event/core/ev_kq_defer.c \
+		event/core/ev_kq_fd.c \
+		event/core/ev_kq_ievents.c \
+		event/core/ev_kq_jobs.c \
+		event/core/ev_kq_object.c \
+		event/core/ev_kq_signal.c \
+		event/core/ev_kq_timer.c \
+		event/core/ev_kq_timeout.c \
+		event/utils/ev_kq_daemon.c \
+		event/utils/ev_kq_logger.c \
+		event/utils/ev_kq_file_mapped.c \
+		thread/thrd_aio_base.c \
+		thread/thrd_pool_base.c \
+		\
+
+OBJS 	= $(LIBRB_SRC:.c=.o)
+CFILES  = $(patsubst %.o,%.c,$(OBJS)) 
+	
+.PHONY: all
+all: $(PROGS)
+
+$(OBJS):	Makefile
+
+$(PROGS): $(OBJS)
+		$(CC) $(LDFLAGS) -o $(LIBRB_OBJS) $(OBJS) -lm
+		ar cru $(LIBRB_LIB) $(LIBRB_OBJS)
+
+$(SRCS:.c=.d):%.d:%.c
+	$(CC) $(CFLAGS) -MM $< >$@
+
+#include $(SRCS:.c=.d)
+
+.DONE:	query
+
+query:
+	-sbquery nosuchthing
+
+clean:
+	-rm -f $(OBJS) *.a *.o *.core $(PROGS) $(SRCS:.c=.d)
+	
+install:
+	cp $(LIBRB_INCLUDE) /usr/local/include
+	cp $(LIBRB_LIB) /usr/local/lib
+	cp $(LIBRB_OBJS) /usr/lib
+	cp $(LIBRB_OBJS) /usr/local/lib
