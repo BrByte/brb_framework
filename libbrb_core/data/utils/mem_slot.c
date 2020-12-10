@@ -457,8 +457,11 @@ void *MemSlotBaseSlotGrabByID(MemSlotBase *memslot_base, int slot_id)
 	if (slot_id < 0)
 		return NULL;
 
-	slot_meta	= MemArenaGrabByID(memslot_base->arena, slot_id);
-	data_ptr	= MemSlotBaseSlotData(slot_meta);
+	/* Grab slot METADATA */
+	slot_meta				= MemArenaGrabByID(memslot_base->arena, slot_id);
+
+	/* Calculate offset to data space */
+	data_ptr				= MemSlotBaseSlotData(slot_meta);
 
 	return data_ptr;
 }
@@ -530,7 +533,7 @@ void *MemSlotBaseSlotGrab(MemSlotBase *memslot_base)
 	}
 
 	/* Grab slot METADATA */
-	slot_meta			= MemArenaGrabByID(memslot_base->arena, slot_id);
+	slot_meta				= MemArenaGrabByID(memslot_base->arena, slot_id);
 
 	slot_meta->slot_id		= slot_id;
 	slot_meta->cur_list_id	= 0;
@@ -538,8 +541,7 @@ void *MemSlotBaseSlotGrab(MemSlotBase *memslot_base)
 	slot_meta->canary01		= (MEMSLOT_CANARY_SEED + (slot_id + 1));
 
 	/* Calculate offset to data space */
-	data_ptr	= (char*)slot_meta;
-	data_ptr	+= sizeof(MemSlotMetaData);
+	data_ptr				= MemSlotBaseSlotData(slot_meta);
 
 	//printf("MemSlotBaseSlotGrab - GRABBED SLOT_ID [%d] - DATA AT [%p] - SLOT_META at [%p]\n", slot_id, data_ptr, slot_meta_ptr);
 

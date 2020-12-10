@@ -178,10 +178,10 @@ typedef struct _CommEvTFTPServer
 #define TZSP_TRANSPORT_DISSECTOR_MAX	32
 
 /*******************************************************/
-typedef int CommEvTZSPLinkLayerDissectorFunc(void *, void *, void *);		/* TZSP_SERVER, TZSP_PACKET, TZSP_MEDIA_DISSECTOR */
-typedef int CommEvTZSPNetworkLayerDissectorFunc(void *, void *, void *);	/* TZSP_SERVER, TZSP_PACKET, TZSP_MEDIA_DISSECTOR */
-typedef int CommEvTZSPTransportLayerDissectorFunc(void *, void *, void *);	/* TZSP_SERVER, TZSP_PACKET, TZSP_MEDIA_DISSECTOR */
-typedef void CommEvTZSPServerCBH(void*, void*, int);						/* BASE, CBDATA, OPERATION, TRANSFER_MODE, FILENAME, CLI_ADDR */
+typedef int CommEvTZSPLinkLayerDissectorFunc(void *, void *, void *, int);		/* TZSP_SERVER, TZSP_PACKET, TZSP_MEDIA_DISSECTOR, PROTO_ID */
+typedef int CommEvTZSPNetworkLayerDissectorFunc(void *, void *, void *, int);	/* TZSP_SERVER, TZSP_PACKET, TZSP_MEDIA_DISSECTOR */
+typedef int CommEvTZSPTransportLayerDissectorFunc(void *, void *, void *, int);	/* TZSP_SERVER, TZSP_PACKET, TZSP_MEDIA_DISSECTOR */
+typedef int CommEvTZSPServerCBH(void*, void*, void*, int);						/* BASE, CBDATA, PACKET, OPERATION */
 /*******************************************************/
 typedef enum
 {
@@ -269,6 +269,8 @@ typedef struct _CommEvTZSPTransportLayerDissector
 typedef struct _CommEvTZSPNetworkLayerDissector
 {
 	CommEvTZSPNetworkLayerDissectorFunc *cb_func;
+	struct _CommEvTZSPLinkLayerDissector *ll_dissector;
+
 	char *proto_desc;
 	int ll_dissector_id;
 	int proto_code;
@@ -372,7 +374,56 @@ typedef struct _CommEvTZSPPacketParsed
 				int proto_id;
 				int payload_sz;
 			} ipv4;
+
+			struct
+			{
+				char src_str[128];
+				char dst_str[128];
+				int proto_id;
+				int payload_sz;
+			} ipv6;
+
+			struct
+			{
+				int id;
+			} vlan;
+
+			struct
+			{
+				unsigned int ipv4:1;
+				unsigned int ipv6:1;
+				unsigned int vlan:1;
+				unsigned int unknown:1;
+			} flags;
+
 		} network_layer;
+
+		struct
+		{
+			struct
+			{
+				struct
+				{
+					unsigned int fin:1;
+					unsigned int syn:1;
+					unsigned int rst:1;
+					unsigned int psh:1;
+					unsigned int ack:1;
+					unsigned int urg:1;
+					unsigned int ecn:1;
+					unsigned int cwr:1;
+					unsigned int ns:1;
+				} flags;
+			} tcp;
+
+			struct
+			{
+				unsigned int tcp:1;
+				unsigned int udp:1;
+				unsigned int icmp:1;
+				unsigned int unknown:1;
+			} flags;
+		} transport_layer;
 
 	} parsed_data;
 
@@ -382,7 +433,54 @@ typedef struct _CommEvTZSPServerConf
 {
 	struct _EvKQBaseLogBase *log_base;
 	int port;
+
+	struct
+	{
+		unsigned int origin_datarate_calc:1;
+	} flags;
 } CommEvTZSPServerConf;
+
+typedef struct _CommEvTZSPServerACL
+{
+	DLinkedListNode node;
+	struct sockaddr_in addr;
+	struct _CommEvTZSPServer *parent;
+} CommEvTZSPServerACL;
+
+typedef struct _CommEvTZSPServerConn
+{
+	DLinkedListNode node;
+	struct sockaddr_in addr;
+	struct _CommEvTZSPServer *parent;
+	char addr_str[64];
+
+	struct
+	{
+		struct
+		{
+			unsigned long packet_rx;
+			unsigned long bytes_rx;
+		} total[COMM_LASTITEM];
+
+		struct
+		{
+			float packet_rx;
+			float bytes_rx;
+		} rate;
+
+	} stats;
+
+	struct
+	{
+		struct timeval last_seen_tv;
+		struct timeval last_stat_tv;
+		struct timeval add_tv;
+		unsigned long last_seen_ts;
+		unsigned long add_ts;
+	} time;
+
+
+} CommEvTZSPServerConn;
 
 typedef struct _CommEvTZSPServer
 {
@@ -394,11 +492,23 @@ typedef struct _CommEvTZSPServer
 
 	struct
 	{
+		DLinkedList list;
+		int timer;
+	} conn;
+
+	struct
+	{
+		DLinkedList list;
+	} acl;
+
+	struct
+	{
 		CommEvTZSPServerCBH *cb_handler_ptr;
 		void *cb_data_ptr;
 		struct
 		{
-			unsigned int enabled :1;
+			unsigned int active:1;
+			unsigned int enabled:1;
 		} flags;
 	} events[COMM_TZSP_EVENT_LASTITEM];
 
@@ -412,6 +522,7 @@ typedef struct _CommEvTZSPServer
 	{
 		long sent_bytes;
 		long recv_bytes;
+		long pkt_count;
 	} stats;
 
 } CommEvTZSPServer;
@@ -675,6 +786,7 @@ typedef enum
 	ICMP_EVENT_REPLY,
 	ICMP_EVENT_DNS_RESOLV,
 	ICMP_EVENT_DNS_FAILED,
+	ICMP_EVENT_STOP,
 	ICMP_EVENT_LASTITEM
 } EvICMPBaseEventCodes;
 /*******************************************************/
@@ -736,6 +848,7 @@ typedef struct _EvICMPBase
 	int socket_fdv4;
 	int socket_fdv6;
 
+	int identy_id;
 	int timer_id;
 	int min_seen_timeout;
 
@@ -752,6 +865,7 @@ typedef struct _EvICMPPeriodicPingerConf
 	char *hostname_str;
 	char *target_ip_str;
 	long reset_count;
+	long stop_count;
 	int interval_ms;
 	int timeout_ms;
 	int payload_sz;
@@ -800,6 +914,7 @@ typedef struct _EvICMPPeriodicPinger
 		char hostname_str[1024];
 		unsigned int unique_id;
 		long reset_count;
+		long stop_count;
 		int interval;
 		int timeout;
 		int payload_sz;
@@ -833,6 +948,8 @@ typedef struct _EvICMPPeriodicPinger
 		unsigned int dns_balance_ips:1;
 		unsigned int dns_resolv_on_fail:1;
 		unsigned int destroy_after_dns_fail:1;
+
+		unsigned int waiting_reply:1;
 	} flags;
 
 } EvICMPPeriodicPinger;
@@ -1164,6 +1281,8 @@ float CommEvICMPtvSubMsec(struct timeval *when, struct timeval *now);
 /* comm/utils/comm_icmp_pinger.c */
 EvICMPPeriodicPinger *CommEvICMPPeriodicPingerNew(EvICMPBase *icmp_base, EvICMPPeriodicPingerConf *pinger_conf);
 void CommEvICMPPeriodicPingerDestroy(EvICMPPeriodicPinger *icmp_pinger);
+int CommEvICMPPeriodicPingerRun(EvICMPPeriodicPinger *icmp_pinger, int only_sched);
+int CommEvICMPPeriodicPingerStop(EvICMPPeriodicPinger *icmp_pinger);
 void CommEvICMPPeriodicPingerStatsReset(EvICMPPeriodicPinger *icmp_pinger);
 int CommEvICMPPeriodicPingerEventIsSet(EvICMPPeriodicPinger *icmp_pinger, EvICMPBaseEventCodes ev_type);
 void CommEvICMPPeriodicPingerEventSet(EvICMPPeriodicPinger *icmp_pinger, EvICMPBaseEventCodes ev_type, CommEvICMPBaseCBH *cb_handler, void *cb_data);
@@ -1204,6 +1323,9 @@ CommEvTZSPServer *CommEvTZSPServerNew(struct _EvKQBase *kq_base);
 int CommEvTZSPServerInit(CommEvTZSPServer *ev_tzsp_server, CommEvTZSPServerConf *ev_tzsp_server_conf);
 void CommEvTZSPServerShutdown(CommEvTZSPServer *ev_tzsp_server);
 void CommEvTZSPServerDestroy(CommEvTZSPServer *ev_tzsp_server);
+int CommEvTZSPServerTZSP_EventSet(CommEvTZSPServer *ev_tzsp_server, int ev_code, CommEvTZSPServerCBH *cb_func, void *cb_data);
+int CommEvTZSPServerTZSP_EventDelete(CommEvTZSPServer *ev_tzsp_server, int ev_code);
+int CommEvTZSPServerTZSP_EventDisable(CommEvTZSPServer *ev_tzsp_server, int ev_code);
 void CommEvTZSPServerDissectorRegisterAll(CommEvTZSPServer *ev_tzsp_server);
 
 CommEvTZSPLinkLayerDissector *CommEvTZSPServerLinkLayerDissectorRegister(CommEvTZSPServer *ev_tzsp_server, CommEvTZSPLinkLayerDissectorFunc *func, int encap_code, int hdr_size);

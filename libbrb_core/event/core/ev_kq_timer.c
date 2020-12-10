@@ -41,7 +41,7 @@ static void EvKQBaseEnqueueTimerChg(EvKQBase *kq_base, unsigned int timer_id, in
 void EvKQBaseTimerArenaNew(EvKQBase *kq_base, int max_timer_count)
 {
 	/* Create new SLOT_BASE to hold timers */
-	MemSlotBaseInit(&kq_base->timer.memslot, sizeof(EvBaseKQTimer), 65535, BRBDATA_THREAD_UNSAFE);
+	MemSlotBaseInit(&kq_base->timer.memslot, sizeof(EvBaseKQTimer), max_timer_count, BRBDATA_THREAD_UNSAFE);
 	return;
 }
 /**************************************************************************************************************************/

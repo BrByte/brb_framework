@@ -12,6 +12,7 @@ LIBDIR=/usr/local/lib
 INCLUDEDIR=/usr/local/include
 WITHOUT_PROFILE=yes
 CFLAGS += -g -w
+#CFLAGS += -w
 CFLAGS += -I${.CURDIR} -I./include -I/usr/local/include
 
 #DPADD= -lm
@@ -49,6 +50,7 @@ SRCS+=	\
 		data/core/dyn_array.c \
 		data/core/dyn_bitmap.c \
 		data/core/hash_table.c \
+		data/core/hash_table_v2.c \
 		data/core/linked_list.c \
 		data/core/mem_buf.c \
 		data/core/mem_stream.c \
@@ -59,6 +61,7 @@ SRCS+=	\
 		data/utils/string.c \
 		data/utils/ipv4_table.c \
 		data/utils/utils.c \
+		data/utils/utils_nw.c \
 		data/utils/speed_regex.c \
 		data/utils/regex.c \
 		data/utils/assoc_array.c \

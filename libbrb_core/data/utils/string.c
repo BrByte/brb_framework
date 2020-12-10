@@ -35,7 +35,7 @@
 
 #include "../include/libbrb_core.h"
 
-#define STRING_MAX_SIZE 65535 * 4
+#define STRING_MAX_SIZE (65535 * 32)
 
 /**************************************************************************************************************************/
 SafeString *SafeStringNew(LibDataThreadSafeType str_type, int grow_rate)

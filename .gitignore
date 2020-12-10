@@ -1,0 +1,12 @@
+# Compiled source #
+###################
+*.o
+*.so
+
+
+# Project Files #
+###################
+*.cproject
+*.project
+*.settings
+/Release

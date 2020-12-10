@@ -106,7 +106,7 @@ int main(int argc, char **argv)
 		ev_tcpclient_conf.cli_proto = COMM_CLIENTPROTO_SSL;
 	}
 
-	ev_tcpclient_conf.log_base		= glob_log_base;
+//	ev_tcpclient_conf.log_base		= glob_log_base;
 	ev_tcpclient_conf.resolv_base	= glob_ev_dns;
 	ev_tcpclient_conf.hostname		= argv[2];
 	ev_tcpclient_conf.port			= atoi(argv[3]);
@@ -185,7 +185,7 @@ static void TCPClientEventRead(int fd, int action, int thrd_id, void *cb_data, v
 //	valid_data	= EvAIOReqTransform_RC4_MD5_DataValidate(tcp_client->read_buffer);
 //	hash_str	= EvAIOReqTransform_RC4_MD5_DataHashString(tcp_client->read_buffer);
 
-	KQBASE_LOG_PRINTF(glob_log_base, LOGTYPE_DEBUG, LOGCOLOR_GREEN, "FD [%d] - DATA [%d]-[%s]\n",
+	KQBASE_LOG_PRINTF(glob_log_base, LOGTYPE_DEBUG, LOGCOLOR_GREEN, "FD [%d] - DATA [%d]-[#%s#]\n",
 			fd, MemBufferGetSize(tcp_client->iodata.read_buffer), MemBufferDeref(tcp_client->iodata.read_buffer));
 
 	MemBufferClean(tcp_client->iodata.read_buffer);
@@ -220,9 +220,12 @@ static void TCPClientEventConnect(int fd, int action, int thrd_id, void *cb_data
 		req_mb 			= MemBufferNew(8092, BRBDATA_THREAD_UNSAFE);
 //		MemBufferPrintf(req_mb, "ENCRYPTED HELLO FROM CLIENT\n");
 
-		MemBufferPrintf(req_mb, "GET / HTTP/1.0\r\n");
-		MemBufferPrintf(req_mb, "Host: brbyte.com\r\n");
-		MemBufferPrintf(req_mb, "\r\n");
+		MemBufferPrintf(req_mb, "-v begin\r\n");
+		MemBufferPrintf(req_mb, "177.52.73.1\r\n");
+		MemBufferPrintf(req_mb, "157.240.222.35\r\n");
+		MemBufferPrintf(req_mb, "52.20.168.249\r\n");
+		MemBufferPrintf(req_mb, "1.1.1.1\r\n");
+		MemBufferPrintf(req_mb, "end\r\n");
 //		//printf("TCPClientEventConnect - FD [%d] connected, sending req\n", fd);
 		CommEvTCPClientAIOWriteAndDestroyMemBuffer(ev_tcpclient, req_mb, NULL, NULL);
 

@@ -33,7 +33,9 @@
  */
 
 #include <libbrb_core.h>
+#include <libbrb_comm_utils.h>
 
+static void mainCreateLogBase(void);
 static int mainTZSPServerInit(void);
 
 EvKQBase *glob_ev_base;
@@ -43,18 +45,11 @@ CommEvTZSPServer *glob_tzsp_server;
 /**************************************************************************************************************************/
 int main(int argc, char **argv)
 {
-	EvKQBaseLogBaseConf log_conf;
-	int op_status;
-
-	/* Clean stack area */
-	memset(&log_conf, 0, sizeof(EvKQBaseLogBaseConf));
-	log_conf.flags.double_write	= 1;
-
 	/* Create event base */
 	glob_ev_base		= EvKQBaseNew(NULL);
-	glob_log_base		= EvKQBaseLogBaseNew(glob_ev_base, &log_conf);
+	mainCreateLogBase();
 
-	KQBASE_LOG_PRINTF(glob_log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "TEST_TZSP_SERVER initialized on PID [%d]\n", getpid());
+	KQBASE_LOG_PRINTF(glob_log_base, LOGTYPE_DEBUG, LOGCOLOR_GREEN, "TEST_TZSP_SERVER initialized on PID [%d]\n", getpid());
 
 	/* Fire UP TZSP server side */
 	mainTZSPServerInit();
@@ -69,6 +64,25 @@ int main(int argc, char **argv)
 /**/
 /**/
 /**************************************************************************************************************************/
+static void mainCreateLogBase(void)
+{
+	EvKQBaseLogBaseConf log_conf;
+
+	/* Clean stack space */
+	memset(&log_conf, 0, sizeof(EvKQBaseLogBaseConf));
+	log_conf.fileout_pathstr			= "./tzsp.log";
+	//log_conf.flags.autohash_disable		= 1;
+	//log_conf.flags.debug_disable		= 1;
+	log_conf.flags.double_write 		= 1;
+
+	glob_log_base						= EvKQBaseLogBaseNew(glob_ev_base, &log_conf);
+	glob_log_base->log_level			= LOGTYPE_DEBUG;
+
+	//	glob_log_base 						= NULL;
+
+	return;
+}
+/**************************************************************************************************************************/
 static int mainTZSPServerInit(void)
 {
 	CommEvTZSPServerConf ev_tzsp_server_conf;
@@ -82,7 +96,7 @@ static int mainTZSPServerInit(void)
 	glob_tzsp_server->log_base	= glob_log_base;
 
 	/* Fire TZSP server up */
-	op_status = CommEvTZSPServerInit(glob_tzsp_server, &ev_tzsp_server_conf);
+	op_status 					= CommEvTZSPServerInit(glob_tzsp_server, &ev_tzsp_server_conf);
 
 	return op_status;
 }

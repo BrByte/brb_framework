@@ -34,6 +34,11 @@
 
 #include "../include/libbrb_core.h"
 
+static void DLinkedListAddUnsafe(DLinkedList *list, DLinkedListNode *node, void *data);
+static void DLinkedListDupUnsafe(DLinkedList *list, DLinkedList *ret_list);
+static void DLinkedListDupFilterUnsafe(DLinkedList *list, DLinkedList *ret_list, DLinkedListFilterNode *filter_func, char *filter_key, char *filter_value);
+static void DLinkedListSortMergeUnsafe(DLinkedList *list, DLinkedListCompareFunc *cmp_func, DLinkedListSortCodes cmp_flag);
+
 static DLinkedListNode *DLinkedListMergeSortFunc(DLinkedListNode *head, DLinkedListCompareFunc *cmp_func, DLinkedListSortCodes cmp_flag);
 
 /**************************************************************************************************************************/
@@ -99,6 +104,11 @@ void DLinkedListAddDebug(DLinkedList *list, DLinkedListNode *node, void *data)
 		MUTEX_UNLOCK(list->mutex, "DLINKED_LIST");
 
 	return;
+}
+/**************************************************************************************************************************/
+void DLinkedListAddHead(DLinkedList *list, DLinkedListNode *node, void *data)
+{
+	return DLinkedListAdd(list, node, data);
 }
 /**************************************************************************************************************************/
 void DLinkedListAdd(DLinkedList *list, DLinkedListNode *node, void *data)
@@ -180,6 +190,277 @@ void DLinkedListAddTail(DLinkedList *list, DLinkedListNode *node, void *data)
 		list->head = node;
 
 	list->size++;
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_UNLOCK(list->mutex, "DLINKED_LIST");
+
+	return;
+}
+/**************************************************************************************************************************/
+void DLinkedListAddBefore(DLinkedList *list, DLinkedListNode *node_pos, DLinkedListNode *node_new, void *data)
+{
+	/* sanitize */
+	if (!list || !node_pos || !node_new || !data)
+		return;
+
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_LOCK(list->mutex, "DLINKED_LIST");
+
+	node_new->data 		= data;
+	node_new->prev 		= node_pos->prev;
+	node_new->next 		= node_pos;
+	node_pos->prev 		= node_new;
+
+	if (node_new->prev)
+		node_new->prev->next 	= node_new;
+
+	if (list->head == NULL)
+		list->head 	= node_new;
+	else if (list->head == node_pos)
+		list->head 	= node_new;
+
+	if (list->tail == NULL)
+		list->tail = node_new;
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_UNLOCK(list->mutex, "DLINKED_LIST");
+
+	return;
+}
+/**************************************************************************************************************************/
+void DLinkedListAddAfter(DLinkedList *list, DLinkedListNode *node_pos, DLinkedListNode *node_new, void *data)
+{
+	/* sanitize */
+	if (!list || !node_pos || !node_new || !data)
+		return;
+
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_LOCK(list->mutex, "DLINKED_LIST");
+
+	node_new->data 		= data;
+	node_new->prev 		= node_pos;
+	node_new->next 		= node_pos->next;
+
+	node_pos->next 		= node_new;
+
+	if (node_new->next)
+		node_new->next->prev 	= node_new;
+
+	if (list->head == NULL)
+		list->head 	= node_new;
+
+	if (list->tail == NULL)
+		list->tail = node_new;
+	else if (list->tail == node_pos)
+		list->tail 	= node_new;
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_UNLOCK(list->mutex, "DLINKED_LIST");
+
+	return;
+}
+/**************************************************************************************************************************/
+void DLinkedListAddPos(DLinkedList *list, unsigned long pos, DLinkedListNode *node, void *data)
+{
+	DLinkedListNode *node_ptr;
+	unsigned int i;
+
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_LOCK(list->mutex, "DLINKED_LIST");
+
+	/* Initialize data */
+	node_ptr	= list->head;
+	i 			= 0;
+
+	if (pos <= 0)
+		goto add_head;
+
+	/* Position exceeds list size - Just add on tail */
+	if (pos >= list->size)
+		goto add_tail;
+
+	while (1)
+	{
+		/* THIS SHOULD NOT HAPPEN - Finished list, just add to tail */
+		if (!node_ptr)
+		{
+			goto add_tail;
+			break; /* NEVER REACHED */
+		}
+
+		/* Found correct position inside list */
+		if (pos == i)
+		{
+			if (node_ptr->prev)
+				node_ptr->prev->next 	= node;
+
+			node->next 		= node_ptr;
+			node->prev 		= node_ptr->prev;
+			node_ptr->prev 	= node;
+
+			break;
+		}
+
+		node_ptr	= node_ptr->next;
+		i++;
+		continue;
+	}
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_UNLOCK(list->mutex, "DLINKED_LIST");
+
+	return;
+
+	/* Add to tail without touching the MUTEX */
+	add_tail:
+	node->data = data;
+	node->next = NULL;
+	node->prev = list->tail;
+
+	if (list->tail)
+		list->tail->next = node;
+
+	list->tail = node;
+
+	if (list->head == NULL)
+		list->head = node;
+
+	list->size++;
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_UNLOCK(list->mutex, "DLINKED_LIST");
+	return;
+
+	/* Common add without touching MUTEX */
+	add_head:
+	node->data = data;
+	node->prev = NULL;
+	node->next = list->head;
+
+	if (list->head)
+		list->head->prev = node;
+
+	list->head = node;
+
+	if (list->tail == NULL)
+		list->tail = node;
+
+	list->size++;
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_UNLOCK(list->mutex, "DLINKED_LIST");
+	return;
+}
+/**************************************************************************************************************************/
+void DLinkedListMoveToTail(DLinkedList *list, DLinkedListNode *node)
+{
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_LOCK(list->mutex, "DLINKED_LIST");
+
+	/* Do nothing */
+	if (node == list->tail)
+	{
+		/* Running THREAD_SAFE, UNLOCK MUTEX */
+		if (list->flags.thread_safe)
+			MUTEX_UNLOCK(list->mutex, "DLINKED_LIST");
+
+		return;
+	}
+
+	/* This node is orphan, direct add */
+	if ((list->head != node) && (NULL == node->next) && (NULL == node->prev))
+		goto add_to_tail;
+
+	/* reorganize reference from node in next and previous */
+	if (node->next)
+		node->next->prev = node->prev;
+
+	if (node->prev)
+		node->prev->next = node->next;
+
+	if (node == list->head)
+		list->head = node->next;
+
+	if (node == list->tail)
+		list->tail = node->prev;
+
+	add_to_tail:
+
+	/* Add to tail */
+	node->next = NULL;
+	node->prev = list->tail;
+
+	if (list->tail)
+		list->tail->next = node;
+
+	list->tail = node;
+
+	if (list->head == NULL)
+		list->head = node;
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_UNLOCK(list->mutex, "DLINKED_LIST");
+
+	return;
+}
+/**************************************************************************************************************************/
+void DLinkedListMoveToHead(DLinkedList *list, DLinkedListNode *node)
+{
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (list->flags.thread_safe)
+		MUTEX_LOCK(list->mutex, "DLINKED_LIST");
+
+	/* Do nothing */
+	if (node == list->head)
+	{
+		/* Running THREAD_SAFE, UNLOCK MUTEX */
+		if (list->flags.thread_safe)
+			MUTEX_UNLOCK(list->mutex, "DLINKED_LIST");
+
+		return;
+	}
+
+	/* This node is orphan, direct add */
+	if ((list->head != node) && (NULL == node->next) && (NULL == node->prev))
+		goto add_to_head;
+
+	/* reorganize reference from node in next and previous */
+	if (node->next)
+		node->next->prev = node->prev;
+
+	if (node->prev)
+		node->prev->next = node->next;
+
+	if (node == list->head)
+		list->head = node->next;
+
+	if (node == list->tail)
+		list->tail = node->prev;
+
+	add_to_head:
+
+	/* Add to head */
+	node->prev = NULL;
+	node->next = list->head;
+
+	if (list->head)
+		list->head->prev = node;
+
+	list->head = node;
+
+	if (list->tail == NULL)
+		list->tail = node;
 
 	/* Running THREAD_SAFE, UNLOCK MUTEX */
 	if (list->flags.thread_safe)
@@ -518,13 +799,10 @@ void DLinkedListSort(DLinkedList *list, DLinkedList *ret_list, DLinkedListCompar
 	}
 
 	/* Duplicate into return list and calculate limit */
-	DLinkedListDup(list, ret_list);
+	DLinkedListDupUnsafe(list, ret_list);
 
 	/* Sort Duplicated List */
-	if (ret_list->size > 512)
-		DLinkedListSortMerge(ret_list, cmp_func, cmp_flag);
-	else
-		DLinkedListSortSimple(ret_list, cmp_func, cmp_flag);
+	DLinkedListSortMergeUnsafe(ret_list, cmp_func, cmp_flag);
 
 	/* Running THREAD_SAFE, UNLOCK MUTEX */
 	if (list->flags.thread_safe)
@@ -536,6 +814,10 @@ void DLinkedListSort(DLinkedList *list, DLinkedList *ret_list, DLinkedListCompar
 void DLinkedListSortFilter(DLinkedList *list, DLinkedList *ret_list, DLinkedListCompareFunc *cmp_func, DLinkedListSortCodes cmp_flag,
 		DLinkedListFilterNode *filter_func, char *filter_key, char *filter_value)
 {
+	DLinkedListNode *node;
+	DLinkedListNode *new_node;
+	int filter_node;
+
 	/* Running THREAD_SAFE, LOCK MUTEX */
 	if (list->flags.thread_safe)
 		MUTEX_LOCK(list->mutex, "DLINKED_LIST");
@@ -544,7 +826,8 @@ void DLinkedListSortFilter(DLinkedList *list, DLinkedList *ret_list, DLinkedList
 	if (!list->head)
 	{
 		/* Initialize empty list */
-		DLinkedListInit(ret_list, (list->flags.thread_safe ? BRBDATA_THREAD_SAFE : BRBDATA_THREAD_UNSAFE));
+		if (!ret_list->head)
+			DLinkedListInit(ret_list, (list->flags.thread_safe ? BRBDATA_THREAD_SAFE : BRBDATA_THREAD_UNSAFE));
 
 		/* Running THREAD_SAFE, UNLOCK MUTEX */
 		if (list->flags.thread_safe)
@@ -554,13 +837,10 @@ void DLinkedListSortFilter(DLinkedList *list, DLinkedList *ret_list, DLinkedList
 	}
 
 	/* Duplicate into return list and calculate limit */
-	DLinkedListDupFilter(list, ret_list, filter_func, filter_key, filter_value);
+	DLinkedListDupFilterUnsafe(list, ret_list, filter_func, filter_key, filter_value);
 
 	/* Sort Duplicated List */
-	if (ret_list->size > 512)
-		DLinkedListSortMerge(ret_list, cmp_func, cmp_flag);
-	else
-		DLinkedListSortSimple(ret_list, cmp_func, cmp_flag);
+	DLinkedListSortMergeUnsafe(ret_list, cmp_func, cmp_flag);
 
 	/* Running THREAD_SAFE, UNLOCK MUTEX */
 	if (list->flags.thread_safe)
@@ -765,5 +1045,96 @@ static DLinkedListNode *DLinkedListMergeSortFunc(DLinkedListNode *head, DLinkedL
 
 	return result;
 
+}
+/**************************************************************************************************************************/
+/**/
+/**/
+/**************************************************************************************************************************/
+static void DLinkedListAddUnsafe(DLinkedList *list, DLinkedListNode *node, void *data)
+{
+	node->data = data;
+	node->prev = NULL;
+	node->next = list->head;
+
+	if (list->head)
+		list->head->prev = node;
+
+	list->head = node;
+
+	if (list->tail == NULL)
+		list->tail = node;
+
+	list->size++;
+
+	return;
+}
+/**************************************************************************************************************************/
+static void DLinkedListDupUnsafe(DLinkedList *list, DLinkedList *ret_list)
+{
+	DLinkedListNode *node;
+	DLinkedListNode *new_node;
+
+	for (node = list->head; node; node = node->next)
+	{
+		new_node = calloc(1, sizeof(DLinkedListNode));
+		new_node->data = node->data;
+		DLinkedListAdd(ret_list, new_node, new_node->data);
+
+		continue;
+	}
+
+	return;
+}
+/**************************************************************************************************************************/
+static void DLinkedListDupFilterUnsafe(DLinkedList *list, DLinkedList *ret_list, DLinkedListFilterNode *filter_func, char *filter_key, char *filter_value)
+{
+	DLinkedListNode *node;
+	DLinkedListNode *new_node;
+	int filter_node;
+
+	for (node = list->head; node; node = node->next)
+	{
+		if (!filter_func)
+			continue;
+
+		filter_node = filter_func(node, filter_key, filter_value);
+
+		/* filter node */
+		if (filter_node)
+			continue;
+
+		/* copy node */
+		new_node = calloc(1, sizeof(DLinkedListNode));
+		new_node->data = node->data;
+		DLinkedListAddUnsafe(ret_list, new_node, new_node->data);
+	}
+
+	return;
+}
+/**************************************************************************************************************************/
+static void DLinkedListSortMergeUnsafe(DLinkedList *list, DLinkedListCompareFunc *cmp_func, DLinkedListSortCodes cmp_flag)
+{
+	DLinkedListNode *node;
+
+	/* Return empty list */
+	if (!list->head)
+		return;
+
+	/* check if the return list has more than one item */
+	if (list->size > 1)
+	{
+		/* call the function to order */
+		node 			= list->head;
+		list->head 		= DLinkedListMergeSortFunc(node, cmp_func, cmp_flag);
+
+		node			= list->head;
+
+		while(node->next)
+			node		= node->next;
+
+		list->tail 		= node;
+	}
+
+	return;
 }
 /**************************************************************************************************************************/

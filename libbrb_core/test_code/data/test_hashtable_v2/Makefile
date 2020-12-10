@@ -3,15 +3,15 @@
 LDFLAGS+= -g -O2
 #DEBUG_FLAGS+= -Wno-comment
 
-PROG=test_daemon
-SRCS=test_daemon.c \
+PROG=test_hashtable_v2
+SRCS=test_hashtable_v2.c \
 	
 #OBJS+=  ${SRCS:R:S/$/.o/g}
 
 WARNS?=	0
 MAN=
 CFLAGS+= -L. -L /usr/local/lib -I. -I./include -I/usr/local/include -I./includes
-LDADD= -lm -lpthread -lssh2 -lssl -lcrypto -lbrb_core
+LDADD= -lm -lpthread -lssh2 -lssl -lcrypto -lbrb_core -lz
 .SUFFIXES: .o
 
 .c.o:	

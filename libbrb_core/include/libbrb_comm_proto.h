@@ -37,7 +37,11 @@
 
 #define COMM_ICMP_MAX_PAYLOAD							8092
 #define COMM_ETHERNET_FRAME_SIZE						14
+#define COMM_ETHVLAN_FRAME_SIZE							4
+
 #define COMM_IPV4_HEADER_SIZE							20
+#define COMM_IPV6_HEADER_SIZE							40
+
 #define COMM_SSL_SNI_MAXSZ								256
 
 
@@ -140,6 +144,38 @@ typedef enum
 	COMM_IPPROTO_TRUNK_2,			/* Trunk-2 */
 	COMM_IPPROTO_LASTITEM
 } CommIPProtoCodes;
+
+#define COMM_TCPFLAG_FIN 	0x0001
+#define COMM_TCPFLAG_SYN 	0x0002
+#define COMM_TCPFLAG_RST 	0x0004
+#define COMM_TCPFLAG_PSH 	0x0008
+#define COMM_TCPFLAG_ACK 	0x0010
+#define COMM_TCPFLAG_URG 	0x0020
+#define COMM_TCPFLAG_ECN 	0x0040
+#define COMM_TCPFLAG_CWR 	0x0080
+#define COMM_TCPFLAG_NS 	0x0100
+#define COMM_TCPFLAG_RES 	0x0E00 /* 3 reserved bits */
+#define COMM_TCPFLAG_MASK 	0x0FFF
+
+//typedef enum
+//{
+//	COMM_TCPFLAG_FIN 	= 0x0001,
+//	COMM_TCPFLAG_SYN 	= 0x0002,
+//	COMM_TCPFLAG_RST 	= 0x0004,
+//	COMM_TCPFLAG_PSH 	= 0x0008,
+//	COMM_TCPFLAG_ACK 	= 0x0010,
+//	COMM_TCPFLAG_URG 	= 0x0020,
+//	COMM_TCPFLAG_ECN 	= 0x0040,
+//	COMM_TCPFLAG_CWR 	= 0x0080,
+//	COMM_TCPFLAG_NS 	= 0x0100,
+//	COMM_TCPFLAG_RES 	= 0x0E00, /* 3 reserved bits */
+//	COMM_TCPFLAG_MASK 	= 0x0FFF,
+//} CommTCPFlagCodes;
+
+
+#define IS_TCP_TH_FIN(x) (x & COMM_TCPFLAG_FIN)
+#define IS_TCP_TH_URG(x) (x & COMM_TCPFLAG_URG)
+
 /******************************************************************************************************/
 /**/
 /**/
@@ -211,11 +247,10 @@ typedef struct _CommEvTCPHeader
 {
 	unsigned int src_port:16;
 	unsigned int dst_port:16;
-	unsigned int seq;
-	unsigned int ack;
+	unsigned int seq:32;
+	unsigned int ack:32;
 	unsigned int hdr_len:4;
-	unsigned int reserved:6;
-	unsigned int flags:6;
+	unsigned int flags:12;
 	unsigned int window_size:16;
 	unsigned int checksum:16;
 	unsigned int urgent:16;

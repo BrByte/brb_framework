@@ -260,7 +260,11 @@ X509 *CommEvSSLUtils_X509ForgeAndSignFromOrigCert(X509 *ca_cert, EVP_PKEY *cakey
 
 			/* Set it to correct type and initialize */
 			gn->type		= GEN_DNS;
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 			gn->d.dNSName	= M_ASN1_IA5STRING_new();
+#else
+			gn->d.dNSName	= ASN1_IA5STRING_new();
+#endif
 
 			/* Failed allocating, bail out */
 			if (!gn->d.dNSName)
@@ -307,17 +311,29 @@ X509 *CommEvSSLUtils_X509ForgeAndSignFromOrigCert(X509 *ca_cert, EVP_PKEY *cakey
 int CommEvSSLUtils_X509CertSign(X509 *target_cert, EVP_PKEY *cakey)
 {
 	const EVP_MD *md;
-
+	// ref https://github.com/sonertari/SSLproxy/blob/master/ssl.c
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	switch (EVP_PKEY_type(cakey->type))
+#else
+	switch (EVP_PKEY_base_id(cakey))
+#endif
 	{
 	case EVP_PKEY_RSA:
 		md = EVP_sha512();
 		break;
 	case EVP_PKEY_DSA:
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 		md = EVP_dss1();
+#else
+		md = EVP_sha256();
+#endif
 		break;
 	case EVP_PKEY_EC:
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 		md = EVP_ecdsa();
+#else
+		md = EVP_sha256();
+#endif
 		break;
 	default:
 		return 0;
@@ -332,20 +348,28 @@ int CommEvSSLUtils_X509CertSign(X509 *target_cert, EVP_PKEY *cakey)
 /**************************************************************************************************************************/
 void CommEvSSLUtils_X509CertRefCountInc(X509 *crt, int thread_safe)
 {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	if (thread_safe)
 		CRYPTO_add(&crt->references, 1, CRYPTO_LOCK_X509);
 	else
 		crt->references++;
+#else
+	X509_up_ref(crt);
+#endif
 
 	return;
 }
 /**************************************************************************************************************************/
 void CommEvSSLUtils_X509PrivateKeyRefCountInc(EVP_PKEY *key, int thread_safe)
 {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	if (thread_safe)
 		CRYPTO_add(&key->references, 1, CRYPTO_LOCK_EVP_PKEY);
 	else
 		key->references++;
+#else
+	EVP_PKEY_up_ref(key);
+#endif
 
 	return;
 }

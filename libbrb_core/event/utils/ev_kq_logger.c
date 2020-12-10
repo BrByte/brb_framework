@@ -100,8 +100,11 @@ EvKQBaseLogBase *EvKQBaseLogBaseNew(EvKQBase *ev_base, EvKQBaseLogBaseConf *log_
 			return NULL;
 		}
 
-		EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_file, COMM_EV_FILEMON, COMM_ACTION_ADD_PERSIST, EvKQBaseLogBaseFileMonCB, log_base);
-
+		#ifdef IS_LINUX
+			EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_fileno, COMM_EV_FILEMON, COMM_ACTION_ADD_PERSIST, EvKQBaseLogBaseFileMonCB, log_base);
+		#else
+			EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_file, COMM_EV_FILEMON, COMM_ACTION_ADD_PERSIST, EvKQBaseLogBaseFileMonCB, log_base);
+		#endif
 	}
 	/* Will write just to STDERR */
 	else
@@ -129,7 +132,11 @@ static int EvKQBaseLogBaseFileMonCB(int fd, int action, int thrd_id, void *cb_da
 		return 1;
 	}
 
+#ifdef IS_LINUX
+	EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_fileno, COMM_EV_FILEMON, COMM_ACTION_ADD_PERSIST, EvKQBaseLogBaseFileMonCB, log_base);
+#else
 	EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_file, COMM_EV_FILEMON, COMM_ACTION_ADD_PERSIST, EvKQBaseLogBaseFileMonCB, log_base);
+#endif
 
     return 1;
 }
@@ -146,6 +153,25 @@ int EvKQBaseLogBaseDestroy(EvKQBaseLogBase *log_base)
 	/* Reference count still holds, bail out */
 	if (log_base->ref_count-- > 0)
 		return log_base->ref_count;
+
+	if (log_base->fileout)
+	{
+#ifdef IS_LINUX
+		EvKQBaseClearEvents(log_base->ev_base, log_base->fileout->_fileno);
+#else
+		EvKQBaseClearEvents(log_base->ev_base, log_base->fileout->_file);
+#endif
+
+		fclose(log_base->fileout);
+		log_base->fileout		= NULL;
+	}
+
+	/* Release memory */
+	if (log_base->fileout_pathstr)
+	{
+		free(log_base->fileout_pathstr);
+		log_base->fileout_pathstr = NULL;
+	}
 
 	/* Destroy log_base */
 	EvKQBaseLogBaseDoDestroy(log_base);
@@ -361,7 +387,17 @@ char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const ch
 
 	/* Generate TIME string */
 	time_offset = strftime(time_buf, (sizeof(time_buf) - 1), "%H:%M:%S.", tm);
-	snprintf((time_buf_ptr + time_offset), sizeof(time_buf), "%06ld - %06ld]", cur_tv->tv_usec, log_base->ev_base->stats.kq_invoke_count);
+
+	if (log_base->flags.thread_safe)
+	{
+#ifdef IS_LINUX
+		snprintf((time_buf_ptr + time_offset), sizeof(time_buf), "%06ld - %06ld - %02X]", cur_tv->tv_usec, log_base->ev_base->stats.kq_invoke_count, 0);
+#else
+		snprintf((time_buf_ptr + time_offset), sizeof(time_buf), "%06ld - %06ld - %02X]", cur_tv->tv_usec, log_base->ev_base->stats.kq_invoke_count, pthread_getthreadid_np());
+#endif
+	}
+	else
+		snprintf((time_buf_ptr + time_offset), sizeof(time_buf), "%06ld - %06ld]", cur_tv->tv_usec, log_base->ev_base->stats.kq_invoke_count);
 
 	/* Select COLOR */
 	switch(color)

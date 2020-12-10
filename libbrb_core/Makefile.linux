@@ -4,7 +4,7 @@ INCLUDE= -I. -I ./include -I /include -I /usr/include -I /usr/include/bits -I /u
 LDFLAGS= -shared -std=c99
 CFLAGS 	= -Wall -Wnocomment -pedantic -std=c99
 PROGS	= libbrb_core
-CFLAGS  = -O2 -g $(AC_CFLAGS) $(INCLUDE) -D_GNU_SOURCE -fPIC
+CFLAGS  = -O2 -g $(AC_CFLAGS) $(INCLUDE) -D_GNU_SOURCE -fPIC -DIS_LINUX
 
 XTRA_LIBS 	= -lm -lbsd
 LIBS    	= -L. $(XTRA_LIBS) -L /usr/local/lib
@@ -60,6 +60,7 @@ LIBRB_SRC=	\
 		data/core/dyn_array.c \
 		data/core/dyn_bitmap.c \
 		data/core/hash_table.c \
+		data/core/hash_table_v2.c \
 		data/core/linked_list.c \
 		data/core/mem_buf.c \
 		data/core/mem_stream.c \
@@ -70,6 +71,7 @@ LIBRB_SRC=	\
 		data/utils/string.c \
 		data/utils/ipv4_table.c \
 		data/utils/utils.c \
+		data/utils/utils_nw.c \
 		data/utils/speed_regex.c \
 		data/utils/regex.c \
 		data/utils/assoc_array.c \

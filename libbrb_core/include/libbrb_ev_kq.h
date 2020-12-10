@@ -230,7 +230,7 @@ typedef struct _EvKQBaseConf
 	struct
 	{
 		int fd_start;
-		int timer_start;
+		int timer_max;
 	} arena;
 
 	struct
@@ -414,16 +414,20 @@ int EvKQBaseFDEventInvoke(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd, int ev_cod
 int EvKQBaseFDGenericInit(EvKQBase *kq_base, int fd, int type);
 int EvKQBaseFileFDInit(EvKQBase *kq_base, int fd);
 int EvKQBaseSerialPortFDInit(EvKQBase *kq_base, int fd);
+
+int EvKQBaseSocketGenericNew(EvKQBase *kq_base, int af, int style, int protocol, int type);
 int EvKQBaseSocketRouteNew(EvKQBase *kq_base, int proto);
 int EvKQBaseSocketRAWNew(EvKQBase *kq_base, int af, int proto);
 int EvKQBaseSocketTCPNew(EvKQBase *kq_base);
 int EvKQBaseSocketUNIXNew(EvKQBase *kq_base);
-int EvKQBaseSocketUDPNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsigned short port);
-int EvKQBaseSocketRawNewAndBind(EvKQBase *kq_base);
 int EvKQBaseSocketUDPNew(EvKQBase *kq_base);
 int EvKQBaseSocketRawNew(EvKQBase *kq_base);
 int EvKQBaseSocketCustomNew(EvKQBase *kq_base, int v6);
 int EvKQBaseSocketNetmapNew(EvKQBase *kq_base, int flags);
+int EvKQBaseSocketUDPNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsigned short port);
+int EvKQBaseSocketRawNewAndBind(EvKQBase *kq_base);
+int EvKQBaseSocketCustomNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsigned short port, int v6);
+
 
 void EvKQBaseSocketClose(EvKQBase *kq_base, int fd);
 int EvKQBaseFDCleanupByKQFD(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd);
@@ -447,6 +451,8 @@ int EvKQBaseSocketSetBlocking(EvKQBase *kq_base, int fd);
 int EvKQBaseSocketSetReuseAddr(EvKQBase *kq_base, int fd);
 int EvKQBaseSocketSetReusePort(EvKQBase *kq_base, int fd);
 int EvKQBaseSocketSetTCPBufferSize(EvKQBase *kq_base, int fd, int size);
+int EvKQBaseSocketSetDstAddr(EvKQBase *kq_base, int fd);
+
 int EvKQBaseSocketSetTOS(EvKQBase *kq_base, int fd, int tos);
 int EvKQBaseSocketGetTOS(EvKQBase *kq_base, int fd);
 int EvKQBaseSocketBindLocal(EvKQBase *kq_base, int fd, struct sockaddr *sock_addr);

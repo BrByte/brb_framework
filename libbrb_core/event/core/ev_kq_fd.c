@@ -215,19 +215,26 @@ int EvKQBaseSerialPortFDInit(EvKQBase *kq_base, int fd)
 	return 1;
 }
 /**************************************************************************************************************************/
-int EvKQBaseSocketRouteNew(EvKQBase *kq_base, int proto)
+int EvKQBaseSocketGenericNew(EvKQBase *kq_base, int af, int style, int protocol, int type)
 {
 	int socket_fd;
 
 	/* Ask the kernel for a socket */
-	socket_fd = socket(PF_ROUTE, SOCK_RAW, proto);
+	socket_fd = socket(af, style, protocol);
 
 	if (socket_fd < 0)
 		return socket_fd;
 
 	/* Initialize internal KQ_FD */
-	EvKQBaseFDGenericInit(kq_base, socket_fd, FD_TYPE_ROUTE_SOCKET);
+	EvKQBaseFDGenericInit(kq_base, socket_fd, type);
+
 	return socket_fd;
+}
+/**************************************************************************************************************************/
+int EvKQBaseSocketRouteNew(EvKQBase *kq_base, int proto)
+{
+	/* Initialize internal KQ_FD */
+	return EvKQBaseSocketGenericNew(kq_base, PF_ROUTE, SOCK_RAW, proto, FD_TYPE_ROUTE_SOCKET);
 }
 /**************************************************************************************************************************/
 int EvKQBaseSocketNetmapNew(EvKQBase *kq_base, int flags)
@@ -246,49 +253,40 @@ int EvKQBaseSocketNetmapNew(EvKQBase *kq_base, int flags)
 	return socket_fd;
 }
 /**************************************************************************************************************************/
+int EvKQBaseSocketUDPNew(EvKQBase *kq_base)
+{
+	/* Initialize internal KQ_FD */
+	return EvKQBaseSocketGenericNew(kq_base, AF_INET, SOCK_DGRAM, IPPROTO_IP, FD_TYPE_UDP_SOCKET);
+}
+/**************************************************************************************************************************/
+int EvKQBaseSocketRawNew(EvKQBase *kq_base)
+{
+	/* Initialize internal KQ_FD */
+	return EvKQBaseSocketGenericNew(kq_base, AF_INET, SOCK_RAW, IPPROTO_RAW, FD_TYPE_RAW_SOCKET);
+}
+/**************************************************************************************************************************/
+int EvKQBaseSocketCustomNew(EvKQBase *kq_base, int v6)
+{
+	/* Initialize internal KQ_FD */
+	return EvKQBaseSocketGenericNew(kq_base, v6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_IP, FD_TYPE_RAW_SOCKET);
+}
+/**************************************************************************************************************************/
 int EvKQBaseSocketRAWNew(EvKQBase *kq_base, int af, int proto)
 {
-	int socket_fd;
-
-	/* Ask the kernel for a socket */
-	socket_fd 	= socket((af >= AF_UNSPEC) ? af : AF_INET, SOCK_RAW, proto);
-
-	if (socket_fd < 0)
-		return socket_fd;
-
 	/* Initialize internal KQ_FD */
-	EvKQBaseFDGenericInit(kq_base, socket_fd, FD_TYPE_RAW_SOCKET);
-	return socket_fd;
+	return EvKQBaseSocketGenericNew(kq_base, (af >= AF_UNSPEC) ? af : AF_INET, SOCK_RAW, proto, FD_TYPE_RAW_SOCKET);
 }
 /**************************************************************************************************************************/
 int EvKQBaseSocketTCPNew(EvKQBase *kq_base)
 {
-	int socket_fd;
-
-	/* Ask the kernel for a socket */
-	socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-
-	if (socket_fd < 0)
-		return socket_fd;
-
 	/* Initialize internal KQ_FD */
-	EvKQBaseFDGenericInit(kq_base, socket_fd, FD_TYPE_TCP_SOCKET);
-	return socket_fd;
+	return EvKQBaseSocketGenericNew(kq_base, AF_INET, SOCK_STREAM, IPPROTO_IP, FD_TYPE_TCP_SOCKET);
 }
 /**************************************************************************************************************************/
 int EvKQBaseSocketUNIXNew(EvKQBase *kq_base)
 {
-	int socket_fd;
-
-	/* Ask the kernel for a socket */
-	socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-
-	if (socket_fd < 0)
-		return socket_fd;
-
 	/* Initialize internal KQ_FD */
-	EvKQBaseFDGenericInit(kq_base, socket_fd, FD_TYPE_UNIX_SOCKET);
-	return socket_fd;
+	return EvKQBaseSocketGenericNew(kq_base, AF_UNIX, SOCK_STREAM, IPPROTO_IP, FD_TYPE_UNIX_SOCKET);
 }
 /**************************************************************************************************************************/
 int EvKQBaseSocketUDPNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsigned short port)
@@ -337,7 +335,6 @@ int EvKQBaseSocketUDPNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsig
 	/* Copy BINDIP if selected */
 	if (bindip)
 		memcpy(&(addr_me.sin_addr), bindip, COMM_IPV4_ALEN);
-
 
 	/* Bind to UDP port */
 	if (-1 == bind(fd, (struct sockaddr *)&addr_me, sizeof(addr_me)))
@@ -407,49 +404,97 @@ int EvKQBaseSocketRawNewAndBind(EvKQBase *kq_base)
 	return fd;
 }
 /**************************************************************************************************************************/
-int EvKQBaseSocketUDPNew(EvKQBase *kq_base)
+int EvKQBaseSocketCustomNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsigned short port, int v6)
 {
-	int socket_fd;
+	struct sockaddr_storage addr_me;
+	int op_status;
+	int fd;
 
-	/* Ask the kernel for a socket */
-	socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+	/* Try to create a new server socket */
+	fd			= EvKQBaseSocketCustomNew(kq_base, v6);
 
-	if (socket_fd < 0)
-		return socket_fd;
+	/* Failed creating FD */
+	if (fd < 0)
+	{
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed initializing UDP FD - ERRNO [%d / %s]\n", errno, strerror(errno));
+		return -1;
+	}
 
-	/* Initialize internal KQ_FD */
-	EvKQBaseFDGenericInit(kq_base, socket_fd, FD_TYPE_UDP_SOCKET);
-	return socket_fd;
-}
-/**************************************************************************************************************************/
-int EvKQBaseSocketRawNew(EvKQBase *kq_base)
-{
-	int socket_fd;
+	/* Set socket to REUSE_ADDR flag */
+	op_status 	= EvKQBaseSocketSetReuseAddr(kq_base, fd);
 
-	/* Ask the kernel for a socket */
-	socket_fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+	/* Failed setting flag */
+	if (op_status < 0)
+	{
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed setting REUSE_ADDR on FD [%d] - ERRNO [%d / %s]\n", fd, errno, strerror(errno));
+		close(fd);
+		return -2;
+	}
 
-	if (socket_fd < 0)
-		return socket_fd;
+	/* Set socket to REUSE_ADDR flag */
+	op_status = EvKQBaseSocketSetReusePort(kq_base, fd);
 
-	/* Initialize internal KQ_FD */
-	EvKQBaseFDGenericInit(kq_base, socket_fd, FD_TYPE_RAW_SOCKET);
-	return socket_fd;
-}
-/**************************************************************************************************************************/
-int EvKQBaseSocketCustomNew(EvKQBase *kq_base, int v6)
-{
-	int socket_fd;
+	/* Failed setting flag */
+	if (op_status < 0)
+	{
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed setting REUSE_PORT on FD [%d] - ERRNO [%d / %s]\n", fd, errno, strerror(errno));
+		close(fd);
+		return -3;
+	}
 
-	/* Ask the kernel for a socket */
-	socket_fd = socket(v6 ? PF_INET6 : PF_INET, SOCK_DGRAM, 0);
+	/* Initialize receiving socket on the device chosen */
+	memset(&addr_me, 0, sizeof(struct sockaddr_storage));
 
-	if (socket_fd < 0)
-		return socket_fd;
+	if (v6)
+	{
+		addr_me.ss_family								= AF_INET6;
+#ifndef IS_LINUX
+		addr_me.ss_len									= sizeof(struct sockaddr_in6);
+#endif
+		((struct sockaddr_in6 *)&addr_me)->sin6_port	= htons(port);
 
-	/* Initialize internal KQ_FD */
-	EvKQBaseFDGenericInit(kq_base, socket_fd, FD_TYPE_RAW_SOCKET);
-	return socket_fd;
+		((struct sockaddr_in6 *)&addr_me)->sin6_addr 	= in6addr_any;
+
+		/* Copy BINDIP if selected */
+		if (bindip)
+			memcpy(&((struct sockaddr_in6 *)&addr_me)->sin6_addr, bindip, sizeof(struct in6_addr));
+
+		op_status 	= bind(fd, (struct sockaddr *)&addr_me, sizeof(struct sockaddr_in6));
+	}
+	else
+	{
+		addr_me.ss_family								= AF_INET;
+#ifndef IS_LINUX
+		addr_me.ss_len									= sizeof(struct sockaddr_in);
+#endif
+		((struct sockaddr_in *)&addr_me)->sin_port		= htons(port);
+
+		/* Copy BINDIP if selected */
+		if (bindip)
+			memcpy(&((struct sockaddr_in *)&addr_me)->sin_addr, bindip, sizeof(struct in_addr));
+
+		op_status 	= bind(fd, (struct sockaddr *)&addr_me, sizeof(struct sockaddr_in));
+	}
+
+	/* Bind to UDP port */
+	if (-1 == op_status)
+	{
+		char ip_str[64] = {0};
+
+		if (v6)
+			inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&addr_me)->sin6_addr, (char *)&ip_str, INET6_ADDRSTRLEN);
+		else
+			inet_ntop(AF_INET, &((struct sockaddr_in *)&addr_me)->sin_addr, (char *)&ip_str, INET_ADDRSTRLEN);
+
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed binding on FD [%d] - ADDR [%d]-[%s] - ERRNO [%d / %s]\n",
+				fd, v6, (char *)&ip_str, errno, strerror(errno));
+		close(fd);
+		return -4;
+	}
+
+	KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_DEBUG, LOGCOLOR_GREEN, "Initialized UDP Socket FD [%d] on PORT [%d]\n", fd, port);
+
+	return fd;
 }
 /**************************************************************************************************************************/
 /**/
@@ -1011,6 +1056,91 @@ int EvKQBaseSocketSetTCPBufferSize(EvKQBase *kq_base, int fd, int size)
 		err = 0;
 
 	return err;
+}
+/**************************************************************************************************************************/
+int EvKQBaseSocketSetDstAddr(EvKQBase *kq_base, int fd)
+{
+	EvBaseKQFileDesc *kq_fd;
+	int proto 	= 0;
+	int flag 	= 0;
+	int opt 	= 1;
+	struct sockaddr_storage si;
+	socklen_t si_len = sizeof(si);
+	int op_status;
+
+	errno 		= ENOSYS;
+
+	/* Do not allow invalid FDs in this routine */
+	if (fd < 0)
+		return 0;
+
+	/* Grab FD from reference table */
+	kq_fd 		= EvKQBaseFDGrabFromArena(kq_base, fd);
+
+	/* We should be active if operator is trying to control this FD */
+	kq_fd->flags.active		= 1;
+	kq_fd->flags.closed 	= 0;
+	kq_fd->flags.closing	= 0;
+
+	memset(&si, 0, sizeof(si));
+
+	if (getsockname(fd, (struct sockaddr *) &si, &si_len) < 0)
+		return -1;
+
+	if (si.ss_family == AF_INET)
+	{
+#ifdef HAVE_IP_PKTINFO
+		/*
+		 *	Linux
+		 */
+		proto 	= SOL_IP;
+		flag 	= IP_PKTINFO;
+#else
+#  ifdef IP_RECVDSTADDR
+
+		/*
+		 *	Set the IP_RECVDSTADDR option (BSD).  Note:
+		 *	IP_RECVDSTADDR == IP_SENDSRCADDR
+		 */
+		proto 	= IPPROTO_IP;
+		flag 	= IP_RECVDSTADDR;
+#  else
+		return -1;
+#  endif
+#endif
+
+#if defined(AF_INET6) && defined(IPV6_PKTINFO)
+	}
+	else if (si.ss_family == AF_INET6)
+	{
+		/* This should actually be standard IPv6 */
+		proto 	= IPPROTO_IPV6;
+
+		/* Work around Linux-specific hackery */
+		flag 	= IPV6_RECVPKTINFO;
+	}
+	else
+	{
+#endif
+
+		/* Unknown AF.  Return an error if possible */
+#  ifdef EPROTONOSUPPORT
+		errno = EPROTONOSUPPORT;
+#  endif
+		return -1;
+	}
+
+	/* Invoke the kernel */
+	op_status		= setsockopt(fd, proto, flag, &opt, sizeof(opt));
+
+	/* Failure */
+	if (op_status < -1)
+		return op_status;
+
+//	/* Set flags */
+//	kq_fd->flags.so_reuse_port = 1;
+
+	return 0;
 }
 /**************************************************************************************************************************/
 int EvKQBaseSocketSetTOS(EvKQBase *kq_base, int fd, int tos)

@@ -1,5 +1,4 @@
 #CC=cc
-
 LDFLAGS+= -g -O2
 #DEBUG_FLAGS+= -Wno-comment
 
@@ -11,7 +10,7 @@ SRCS=test_mem_slot.c \
 WARNS?=	0
 MAN=
 CFLAGS+= -L. -L /usr/local/lib -I. -I./include -I/usr/local/include -I./includes
-LDADD= -lm -lpthread -lssh2 -lssl -lcrypto -lbrb_core
+LDADD= -lm -lz -lpthread -lssh2 -lssl -lcrypto -lbrb_core
 .SUFFIXES: .o
 
 .c.o:	

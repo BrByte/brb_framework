@@ -229,6 +229,23 @@ int MemBufferShrinkToToken(MemBuffer *mb_ptr, char token)
 	return j;
 }
 /**************************************************************************************************************************/
+char* MemBufferLastCharGrab(MemBuffer *mb_ptr)
+{
+	char *base_ptr;
+
+	/* Sanity check */
+	if (!mb_ptr)
+		return "";
+
+	if (0 == mb_ptr->size)
+		return "";
+
+	base_ptr	= mb_ptr->data;
+	base_ptr	+= (mb_ptr->size - 1);
+
+	return base_ptr;
+}
+/**************************************************************************************************************************/
 void MemBufferRemoveLastChar(MemBuffer *mb_ptr)
 {
 	char *base_ptr;
@@ -407,30 +424,29 @@ unsigned long MemBufferAdd(MemBuffer *mb_ptr, void *new_data, unsigned long new_
 MemBuffer *MemBufferMerge(MemBuffer *mb1_ptr, MemBuffer *mb2_ptr)
 {
 	MemBuffer *merged_mb;
-	int mb1_sz = 0;
-	int mb2_sz = 0;
-	int new_mb_sz = 0;
+	unsigned long mb1_sz = 0;
+	unsigned long mb2_sz = 0;
+	unsigned long new_mb_sz = 0;
 
 	/* Sanity Check */
 	if ( (!mb1_ptr) || (!mb2_ptr) )
 		return 0;
 
-	mb1_sz = MemBufferGetSize(mb1_ptr);
-	mb2_sz = MemBufferGetSize(mb2_ptr);
+	mb1_sz 		= MemBufferGetSize(mb1_ptr);
+	mb2_sz 		= MemBufferGetSize(mb2_ptr);
 
 	/* Calculated new mem buffer size */
-	new_mb_sz = (mb1_sz + mb2_sz);
+	new_mb_sz 	= (mb1_sz + mb2_sz);
 
 	/* Create new merged membuffer */
-	merged_mb = MemBufferNew( BRBDATA_THREAD_SAFE, new_mb_sz);
+	merged_mb 	= MemBufferNew( BRBDATA_THREAD_SAFE, new_mb_sz);
 
 	/* Add both first and second parts to merged */
 	MemBufferAdd(merged_mb, MemBufferDeref(mb1_ptr), mb1_sz);
 	MemBufferAdd(merged_mb, MemBufferDeref(mb2_ptr), mb2_sz);
 
-	/* Return new membuffer */
+	/* Return new MemBuffer */
 	return merged_mb;
-
 }
 /**************************************************************************************************************************/
 int MemBufferPrintf(MemBuffer *mb_ptr, char *message, ...)
@@ -526,7 +542,6 @@ int MemBufferSyncWriteToFile(MemBuffer *mb_ptr, char *filepath)
 	close(fd);
 
 	return 1;
-
 }
 /**************************************************************************************************************************/
 int MemBufferWriteToFile(MemBuffer *mb_ptr, char *filepath)
@@ -700,7 +715,165 @@ int MemBufferOffsetWriteToFile(MemBuffer *mb_ptr, unsigned long offset, char *fi
 	close(fd);
 
 	return 1;
+}
+/**************************************************************************************************************************/
+int MemBufferMmapWriteToFile(MemBuffer *mb_ptr, char *filepath)
+{
+	void *data_ptr;
+	unsigned long data_sz;
+	int fd;
 
+	long op_status = -1;
+
+	/* Sanity check */
+	if ( (!mb_ptr) || (!filepath) )
+	{
+		return EINVAL;
+	}
+
+	/* Set UMASK and remove old file */
+	umask(222);
+	unlink(filepath);
+
+	/* Try to open file */
+	//	fd = open(filepath, (O_WRONLY | O_TRUNC | O_CREAT | O_SYNC), 0644);
+	fd = open(filepath, O_RDWR | O_CREAT, 0644);
+
+	//	O_DIRECT may be used to minimize or eliminate the cache effects of	read-
+	//	     ing and writing.  The system will attempt to avoid	caching	the data you
+	//	     read or write.  If	it cannot avoid	caching	the data, it will minimize the
+	//	     impact the	data has on the	cache.	Use of this flag can drastically
+	//	     reduce performance	if not used with care.
+
+	/* Failed opening file */
+	if (fd < 0)
+	{
+		return EBADF;
+	}
+
+	/* Grab data and WRITE */
+	data_ptr	= MemBufferDeref(mb_ptr);
+	data_sz		= MemBufferGetSize(mb_ptr);
+
+	op_status	= lseek(fd, data_sz - 1, SEEK_SET);
+
+	/* Failed lseek */
+	if (op_status < 0)
+	{
+		close(fd);
+		return ESPIPE;
+	}
+
+	op_status	= write(fd, "", 1);
+
+	/* Failed writing */
+	if (op_status < 0)
+	{
+		close(fd);
+		return EIO;
+	}
+
+	void *map_ptr;
+
+	map_ptr 	= mmap(0, data_sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
+	if (!map_ptr)
+	{
+		close(fd);
+		return EPERM;
+	}
+
+	memcpy(map_ptr, data_ptr, data_sz);
+
+	op_status	= msync(map_ptr, data_sz, MS_SYNC);
+
+	/* Failed MemMap Sync */
+	if (op_status < 0)
+	{
+		close(fd);
+		return ENXIO;
+	}
+
+	op_status	= munmap(map_ptr, data_sz);
+
+	/* Failed MemMap unmount */
+	if (op_status < 0)
+	{
+		close(fd);
+		return ENOEXEC;
+	}
+
+	/* Sync and close */
+	//	fsync(fd);
+	close(fd);
+
+	return 0;
+}
+/**************************************************************************************************************************/
+MemBuffer *MemBufferMmapFile(char *filepath)
+{
+	MemBuffer *mb_ptr;
+	void *mmap_ptr;
+	struct stat file_stat;
+	unsigned long file_sz;
+	int op_status;
+	int fd;
+
+	long bytes_read = -1;
+
+	/* Sanity check */
+	if (!filepath)
+		return NULL;
+
+	/* Try to open file */
+	umask(S_IWGRP | S_IWOTH);
+
+	fd = open(filepath, O_RDONLY);
+
+	/* Failed opening file */
+	if (fd < 0)
+		return NULL;
+
+	/* Acquire file status information */
+	op_status = fstat(fd, &file_stat);
+
+	if (op_status < 0)
+	{
+		close(fd);
+		return NULL;
+	}
+
+	/* Get file size */
+	file_sz = file_stat.st_size;
+
+	/* MMAP file */
+#if defined(__linux__) && defined(MAP_POPULATE)
+	mmap_ptr = mmap(NULL, file_sz, PROT_READ | PROT_WRITE, MAP_POPULATE, fd, 0);
+#else
+	mmap_ptr = mmap(NULL, file_sz, PROT_READ | PROT_WRITE, MAP_PREFAULT_READ, fd, 0);
+#endif
+	if (MAP_FAILED  == mmap_ptr)
+	{
+		close(fd);
+		return NULL;
+	}
+
+	BRB_CALLOC(mb_ptr, 1, sizeof(MemBuffer));
+
+	/* Fill in data */
+	mb_ptr->mb_type			= BRBDATA_THREAD_UNSAFE;
+	mb_ptr->size			= file_sz;
+	mb_ptr->capacity		= file_sz;
+
+	/* Set flags */
+	mb_ptr->flags.mmaped	= 1;
+	mb_ptr->flags.readonly	= 1;
+
+	/* Map file */
+	mb_ptr->data			= mmap_ptr;
+	mb_ptr->mmap_fd			= fd;
+
+	return mb_ptr;
 }
 /**************************************************************************************************************************/
 MemBuffer *MemBufferReadOnlyMmapFile(char *filepath)
@@ -767,7 +940,6 @@ MemBuffer *MemBufferReadOnlyMmapFile(char *filepath)
 	mb_ptr->mmap_fd			= fd;
 
 	return mb_ptr;
-
 }
 /**************************************************************************************************************************/
 MemBuffer *MemBufferReadFromFile(char *filepath)
@@ -845,7 +1017,84 @@ MemBuffer *MemBufferReadFromFile(char *filepath)
 	return mb_ptr;
 }
 /**************************************************************************************************************************/
-long MemBufferReadFromFileOffseted(MemBuffer *mb_ptr, unsigned long file_offset, unsigned long data_sz, char *filepath)
+MemBuffer *MemBufferReadFromBigFile(char *filepath)
+{
+	MemBuffer *mb_ptr;
+	struct stat file_stat;
+	char *read_buffer;
+	unsigned long file_sz;
+	int op_status;
+	int fd;
+
+	long bytes_read = -1;
+	unsigned long bytes_offset = 0;
+	unsigned long bytes_block = (1048576 * 2);
+
+	/* Sanity check */
+	if (!filepath)
+		return NULL;
+
+	/* Check if table exists already */
+	op_status = access(filepath, R_OK);
+
+	/* Nothing to read from, bail out */
+	if (op_status < 0)
+		return NULL;
+
+	/* Try to open file */
+	//umask(S_IWGRP | S_IWOTH);
+
+	fd = open(filepath, O_RDONLY);
+
+	/* Failed opening file */
+	if (fd < 0)
+		return NULL;
+
+	/* Acquire file status information */
+	fstat(fd, &file_stat);
+
+	/* Get file size */
+	file_sz = file_stat.st_size;
+
+	/* Alloc space for raw file content */
+	BRB_CALLOC(read_buffer, bytes_block + 1, sizeof(char));
+
+	/* Create a new mem_buf, using file size as grow rate */
+	mb_ptr 			= MemBufferNew(BRBDATA_THREAD_UNSAFE, file_sz);
+
+	while (bytes_offset < file_sz)
+	{
+		bytes_read 	= read(fd, read_buffer, bytes_block);
+
+		//		printf("bytes_offset [%lu] [%lu]\n", bytes_offset, file_sz);
+
+		if (bytes_read <= 0)
+		{
+			//			printf("bytes_read fail [%d] [%ld]\n", errno, bytes_read);
+
+			/* Free resources and return */
+			BRB_FREE(read_buffer);
+			close(fd);
+
+			MemBufferDestroy(mb_ptr);
+
+			return NULL;
+		}
+
+		bytes_offset = (bytes_offset + bytes_read);
+
+		/* Add data to mem_buf */
+		MemBufferAdd(mb_ptr, read_buffer, bytes_read);
+	}
+
+	/* Free resources and return */
+	BRB_FREE(read_buffer);
+	close(fd);
+
+	return mb_ptr;
+}
+/**************************************************************************************************************************/
+long MemBufferReadFromFileOffseted(MemBuffer *mb_ptr, unsigned long file_offset, long data_sz, char *filepath)
 {
 	struct stat file_stat;
 	unsigned long file_sz;
@@ -856,20 +1105,20 @@ long MemBufferReadFromFileOffseted(MemBuffer *mb_ptr, unsigned long file_offset,
 
 	/* Sanity check */
 	if (!filepath)
-		return 0;
+		return -1;
 
 	/* Check if table exists already */
 	op_status 	= access(filepath, R_OK);
 
 	/* Nothing to read from, bail out */
 	if (op_status < 0)
-		return 0;
+		return -2;
 
 	fd 			= open(filepath, O_RDONLY);
 
 	/* Failed opening file */
 	if (fd < 0)
-		return 0;
+		return -3;
 
 	/* Acquire file status information */
 	fstat(fd, &file_stat);
@@ -877,13 +1126,16 @@ long MemBufferReadFromFileOffseted(MemBuffer *mb_ptr, unsigned long file_offset,
 	/* Get file size */
 	file_sz 	= file_stat.st_size;
 
+	if (data_sz < 0)
+		data_sz = (file_sz - file_offset);
+
 	/* Can't read, partial data is great than file size */
 	if ((data_sz + file_offset) > file_sz)
 	{
 		/* Free resources and return */
 		close(fd);
 
-		return 0;
+		return -4;
 	}
 
 	/* Read partial data from file */
@@ -1550,6 +1802,124 @@ MemBuffer *MemBufferMetaDataUnPackFromMB(MemBuffer *raw_metadata_mb)
 	}
 
 	return mb_ptr;
+}
+/**************************************************************************************************************************/
+#define windowBits			15
+#define ENABLE_ZLIB_GZIP	32
+#define GZIP_CHUNK_SZ		0x4000
+
+/**************************************************************************************************************************/
+int MemBufferGzipDeflate(MemBuffer *in_mb, int in_offset, MemBuffer *out_mb)
+{
+	z_stream strm;
+	unsigned char out_buf_data[GZIP_CHUNK_SZ];
+	unsigned char *out_buf_ptr;
+	unsigned long out_buf_space;
+	unsigned long out_buf_sz;
+	int op_status;
+
+	/* Clean up stack */
+	memset(&strm, 0, sizeof(z_stream));
+
+	/* Point to buffer in stack area */
+	out_buf_ptr		= (unsigned char *)&out_buf_data;
+	out_buf_sz		= GZIP_CHUNK_SZ;
+
+	strm.next_in 	= (unsigned char *)MemBufferDeref(in_mb);
+	strm.avail_in 	= MemBufferGetSize(in_mb);
+	strm.total_in  	= strm.avail_in;
+	strm.next_out  	= out_buf_ptr;
+	strm.avail_out 	= out_buf_sz;
+	strm.total_out 	= strm.avail_out;
+
+	/* Initialize ZLIB context */
+	op_status 		= deflateInit(&strm, Z_DEFAULT_COMPRESSION);
+	//op_status 	= deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, windowBits + ENABLE_ZLIB_GZIP, 8, Z_DEFAULT_STRATEGY);
+
+	/* Failed initializing ZLIP context */
+	if (Z_OK != op_status)
+		return 0;
+
+	/* Begin deflating data */
+	do {
+
+		strm.avail_out	= out_buf_sz;
+		strm.next_out 	= out_buf_ptr;
+
+		op_status 		= deflate(&strm, Z_FINISH);
+
+		if (op_status < 0)
+			return 0;
+
+		out_buf_space 	= out_buf_sz - strm.avail_out;
+		MemBufferAdd(out_mb, out_buf_ptr, out_buf_space);
+	}
+	while (strm.avail_out == 0);
+
+	/* Finish DEFLATE context */
+	op_status = deflateEnd(&strm);
+
+	/* Failed finishing context */
+	if (Z_OK != op_status)
+		return -1;
+
+	return 1;
+}
+/**************************************************************************************************************************/
+int MemBufferGzipInflate(MemBuffer *in_mb, int in_offset, MemBuffer *out_mb)
+{
+	z_stream strm;
+	unsigned char out_buf_data[GZIP_CHUNK_SZ + 1];
+	unsigned char *out_buf_ptr;
+	unsigned long out_buf_space;
+	unsigned long out_buf_sz;
+	int op_status;
+
+	/* Clean up stack */
+	memset(&strm, 0, sizeof(z_stream));
+
+	/* Point to buffer in stack area */
+	out_buf_ptr		= (unsigned char *)&out_buf_data;
+	out_buf_sz		= GZIP_CHUNK_SZ;
+
+	/* Fill in ZLIB context data */
+	strm.next_in 	= (unsigned char *)MemBufferOffsetDeref(in_mb, in_offset);
+	strm.avail_in 	= MemBufferGetSize(in_mb);
+	strm.total_in  	= strm.avail_in;
+	strm.next_out  	= out_buf_ptr;
+	strm.avail_out 	= out_buf_sz;
+	strm.total_out 	= strm.avail_out;
+
+	/* Initialize ZLIB context */
+	op_status 		= inflateInit2(&strm, windowBits + ENABLE_ZLIB_GZIP);
+
+	/* Failed initializing ZLIP context */
+	if (Z_OK != op_status)
+		return -1;
+
+	/* Begin inflating data */
+	do
+	{
+		strm.avail_out	= out_buf_sz;
+		strm.next_out 	= out_buf_ptr;
+		op_status 		= inflate(&strm, Z_NO_FLUSH);
+
+		if (op_status < 0)
+			return -1;
+
+		out_buf_space = (out_buf_sz - strm.avail_out);
+		MemBufferAdd(out_mb, out_buf_ptr, out_buf_space);
+	}
+	while (strm.avail_out == 0);
+
+	/* Finish inflate context */
+	op_status 			= inflateEnd(&strm);
+
+	/* Failed finishing context */
+	if (Z_OK != op_status)
+		return -1;
+
+	return 1;
 }
 /**************************************************************************************************************************/
 /**/

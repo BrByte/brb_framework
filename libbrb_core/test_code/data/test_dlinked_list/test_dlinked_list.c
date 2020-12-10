@@ -58,6 +58,10 @@ int main(void)
 {
 	DLinkedList test_list;
 	TestNode *test_node;
+	TestNode *test_3333;
+	TestNode *test_4444;
+	TestNode *test_6666;
+	TestNode *test_9999;
 
 	DLinkedListInit(&test_list, BRBDATA_THREAD_UNSAFE);
 
@@ -65,52 +69,100 @@ int main(void)
 	printf("----------------------------------------------------------------------------------------------------\n");
 	printf("----------------------------------------------------------------------------------------------------\n");
 
+//	test_node = test_list.tail->data;
+//	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
 
-	test_node = createNode(4, "/aaaa");
+	test_node = createNode(4, "/6666");
+	test_6666 = test_node;
 	DLinkedListAddTail(&test_list, &test_node->node, test_node);
-	test_node = test_list.tail->data;
-	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
 
-	test_node = createNode(4, "/bbbb");
+	test_node = createNode(4, "/9999");
+	test_9999 = test_node;
 	DLinkedListAddTail(&test_list, &test_node->node, test_node);
-	test_node = test_list.tail->data;
-	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
+//	test_node = test_list.tail->data;
+//	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
 
-	printNodes(&test_list);
-	DLinkedListPopHead(&test_list);
-	printNodes(&test_list);
-	DLinkedListPopHead(&test_list);
+//	printNodes(&test_list);
+//	DLinkedListMoveToTail(&test_list, &test_9999->node);
 	printNodes(&test_list);
 
-	test_node = createNode(8, "/cccc.txt");
-	DLinkedListAddTail(&test_list, &test_node->node, test_node);
-	test_node = test_list.tail->data;
-	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
+	test_node = createNode(4, "/1111");
+	DLinkedListAddBefore(&test_list, &test_6666->node, &test_node->node, test_node);
 
-	test_node = createNode(8, "/eeee.txt");
-	DLinkedListAddTail(&test_list, &test_node->node, test_node);
-	test_node = test_list.tail->data;
-	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
+	test_node = createNode(4, "/2222");
+	DLinkedListAddBefore(&test_list, &test_6666->node, &test_node->node, test_node);
 
+	test_3333 = createNode(4, "/3333");
+	DLinkedListAddBefore(&test_list, &test_6666->node, &test_3333->node, test_3333);
+
+	test_4444 = createNode(4, "/4444");
+	DLinkedListAddBefore(&test_list, &test_6666->node, &test_4444->node, test_4444);
+
+	test_node = createNode(4, "/5555");
+	DLinkedListAddBefore(&test_list, &test_6666->node, &test_node->node, test_node);
+
+
+//	test_node = createNode(4, "/7777");
+//	DLinkedListAddBefore(&test_list, &test_9999->node, &test_node->node, test_node);
+//
+	test_node = createNode(4, "/BBBB");
+	DLinkedListAddAfter(&test_list, &test_9999->node, &test_node->node, test_node);
 	printNodes(&test_list);
-	DLinkedListPopHead(&test_list);
+
+	DLinkedListMoveToHead(&test_list, &test_9999->node);
 	printNodes(&test_list);
 
-	test_node = createNode(8, "/dddd.txt");
-	DLinkedListAddTail(&test_list, &test_node->node, test_node);
-	test_node = test_list.tail->data;
-	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
-
-	printNodes(&test_list);
-	DLinkedListPopHead(&test_list);
+	DLinkedListMoveToHead(&test_list, &test_3333->node);
 	printNodes(&test_list);
 
-	test_node = createNode(4, "/abcd");
-	DLinkedListAddTail(&test_list, &test_node->node, test_node);
-	test_node = test_list.tail->data;
-	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
-
+	DLinkedListMoveToHead(&test_list, &test_4444->node);
 	printNodes(&test_list);
+
+	DLinkedListMoveToHead(&test_list, &test_9999->node);
+	printNodes(&test_list);
+
+//	test_node = createNode(4, "/8888");
+//	DLinkedListAddBefore(&test_list, &test_9999->node, &test_node->node, test_node);
+//	printNodes(&test_list);
+//
+//	test_node = createNode(4, "/AAAA");
+//	DLinkedListMoveTo(&test_list, &test_9999->node, &test_node->node, test_node);
+
+//	printNodes(&test_list);
+//	DLinkedListPopHead(&test_list);
+//	printNodes(&test_list);
+//	DLinkedListPopHead(&test_list);
+//	printNodes(&test_list);
+
+//	test_node = createNode(8, "/cccc.txt");
+//	DLinkedListAddTail(&test_list, &test_node->node, test_node);
+//	test_node = test_list.tail->data;
+//	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
+//
+//	test_node = createNode(8, "/eeee.txt");
+//	DLinkedListAddTail(&test_list, &test_node->node, test_node);
+//	test_node = test_list.tail->data;
+//	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
+//
+//	printNodes(&test_list);
+//	DLinkedListPopHead(&test_list);
+//	printNodes(&test_list);
+//
+//	test_node = createNode(8, "/dddd.txt");
+//	DLinkedListAddTail(&test_list, &test_node->node, test_node);
+//	test_node = test_list.tail->data;
+//	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
+//
+//	printNodes(&test_list);
+//	DLinkedListPopHead(&test_list);
+//	printNodes(&test_list);
+//
+//	test_node = createNode(4, "/abcd");
+//	DLinkedListAddTail(&test_list, &test_node->node, test_node);
+//	test_node = test_list.tail->data;
+//	printf("DLINKED LIST TAIL [%d]-[%s] - SZ [%lu] \n", test_node->node_id, test_node->name_str, test_list.size);
+
+//	printNodes(&test_list);
 
 //	test_node = createNode(130);
 //	DLinkedListAddTail(&test_list, &test_node->node, test_node);
@@ -145,6 +197,9 @@ int main(void)
 //	sortNodesPrint(&test_list);
 //	printf("----------------------------------------------------------------------------------------------------\n");
 //	printf("----------------------------------------------------------------------------------------------------\n");
+
+	DLinkedListMoveToTail(&test_list, &test_9999->node);
+	printNodes(&test_list);
 
 //	test_node = test_list.head->data;
 //	printf("DLINKED LIST HEAD [%d] - SZ [%lu] \n", test_node->node_id, test_list.size);

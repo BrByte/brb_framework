@@ -150,6 +150,7 @@ int MetaDataUnpack(MetaData *meta_data, MemBuffer *meta_data_mb, MetaDataUnpacke
 	char *raw_data_ptr;
 	char *canary_ptr;
 	int error_code;
+	int i;
 
 	unsigned long cur_remaining		= 0;
 	unsigned long cur_needed		= 0;
@@ -195,14 +196,16 @@ int MetaDataUnpack(MetaData *meta_data, MemBuffer *meta_data_mb, MetaDataUnpacke
 	cur_offset += sizeof(MetaDataHeader);
 
 	/* Unpack ITEMs */
-	while (1)
+	for(i = 0; i < meta_data_hdr->item_count; i++)
 	{
-		/* Item count requested by upper layers reached, STOP */
-		if (unpacker_info && (cur_item_count >= unpacker_info->control.max_item_count))
-		{
-			//printf("MetaDataUnpack - Item count reached - CUR [%lu] - WANTED [%lu] \n", cur_item_count, unpacker_info->control.max_item_count);
-			break;
-		}
+//	while (1)
+//	{
+//		/* Item count requested by upper layers reached, STOP */
+//		if (unpacker_info && (cur_item_count >= unpacker_info->control.max_item_count))
+//		{
+//			//printf("MetaDataUnpack - Item count reached - CUR [%lu] - WANTED [%lu] \n", cur_item_count, unpacker_info->control.max_item_count);
+//			break;
+//		}
 
 		/* Get current remaining bytes of RAW_MEM_BUFFER */
 		cur_remaining = MemBufferGetSize(meta_data->raw_data);

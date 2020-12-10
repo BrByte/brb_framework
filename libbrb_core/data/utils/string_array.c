@@ -661,7 +661,7 @@ void StringArrayExplodeStrInit(StringArray *arr, char *str_ptr, char *delim, cha
 		{
 			StringArrayAdd(arr, "");
 			first_token_flag = 1;
-//			i++;
+			//			i++;
 
 			continue;
 		}
@@ -814,7 +814,7 @@ StringArray *StringArrayExplodeStrN(char *str_ptr, char *delim, char *escape, ch
 			first_token_flag = 1;
 			found_token_flag = 1;
 
-//			i++;
+			//			i++;
 
 			continue;
 		}
@@ -965,7 +965,7 @@ StringArray *StringArrayExplodeLargeStrN(char *str_ptr, char *delim, char *escap
 			/* Mark first token flag */
 			first_token_flag = 1;
 			found_token_flag = 1;
-//			i++;
+			//			i++;
 
 			continue;
 		}
@@ -1389,6 +1389,39 @@ int StringArrayLineHasPrefix(StringArray *str_arr, char *data)
 	return line_count;
 }
 /**************************************************************************************************************************/
+int StringArrayHasLineNumeric(StringArray *str_arr, int number)
+{
+	char *str_ptr;
+	int data_sz;
+	int str_sz;
+
+	int line_count = 0;
+
+	/* Sanity check */
+	if (!str_arr)
+		return 0;
+
+	/* CRITICAL SECTION - BEGIN */
+	if (str_arr->arr_type == BRBDATA_THREAD_SAFE)
+		_StringArrayEnterCritical(str_arr);
+
+	/* Traverse all elements */
+	STRINGARRAY_FOREACH(str_arr, str_ptr, str_sz)
+	{
+		/* Number found */
+		if (number == atoi(str_ptr))
+			return 1;
+
+		continue;
+	}
+
+	/* CRITICAL SECTION - END */
+	if (str_arr->arr_type == BRBDATA_THREAD_SAFE)
+		_StringArrayLeaveCritical(str_arr);
+
+	return 0;
+}
+/**************************************************************************************************************************/
 int StringArrayHasLine(StringArray *str_arr, char *data)
 {
 	char *str_ptr;
@@ -1403,6 +1436,41 @@ int StringArrayHasLine(StringArray *str_arr, char *data)
 
 	/* Get data length */
 	data_sz = strlen(data);
+
+	/* CRITICAL SECTION - BEGIN */
+	if (str_arr->arr_type == BRBDATA_THREAD_SAFE)
+		_StringArrayEnterCritical(str_arr);
+
+	/* Traverse all elements */
+	STRINGARRAY_FOREACH(str_arr, str_ptr, str_sz)
+	{
+		if (data_sz != str_sz)
+			continue;
+
+		if (!strncmp(str_ptr, data, data_sz))
+			line_count++;
+
+		continue;
+	}
+
+	/* CRITICAL SECTION - END */
+	if (str_arr->arr_type == BRBDATA_THREAD_SAFE)
+		_StringArrayLeaveCritical(str_arr);
+
+	return line_count;
+
+}
+/**************************************************************************************************************************/
+int StringArrayHasLinePartial(StringArray *str_arr, char *data, int data_sz)
+{
+	char *str_ptr;
+	int str_sz;
+
+	int line_count = 0;
+
+	/* Sanity check */
+	if ( (!str_arr) || (!data) || (data_sz < 0))
+		return 0;
 
 	/* CRITICAL SECTION - BEGIN */
 	if (str_arr->arr_type == BRBDATA_THREAD_SAFE)
@@ -1817,6 +1885,74 @@ void StringArrayStripCRLF(StringArray *str_arr)
 		{
 			str_arr->data->offsetarr[_count_] -= delta_size;
 		}
+	}
+
+	return;
+}
+/**************************************************************************************************************************/
+void StringArrayStripWhiteSpaces(StringArray *str_arr)
+{
+	char *str_ptr;
+	int delta_size;
+	int str_sz;
+	int i;
+
+	/* Sanity check */
+	if (!str_arr)
+		return;
+
+	/* Traverse all lines of string array */
+	STRINGARRAY_FOREACH(str_arr, str_ptr, str_sz)
+	{
+		delta_size = -1;
+
+		/* Scan line FORWARD */
+		for (i = 0; ((i < str_sz) && (str_ptr[i] != '\0')); i++)
+		{
+			/* Clean white spaces from beginning */
+			if (str_ptr[i] == ' ')
+			{
+				/* Position where char is located */
+				str_ptr[i] = '\0';
+				delta_size = i;
+				continue;
+			}
+			else
+				break;
+
+			continue;
+		}
+
+		/* Adjust current line size */
+		if (delta_size > -1)
+		{
+			str_arr->data->basearr[_count_]		+= (delta_size + 1);
+			str_arr->data->offsetarr[_count_]	-= (delta_size + 1);
+			delta_size = -1;
+		}
+
+		/* Scan line BACKWARDS */
+		for (i = (str_sz - 1); ((i > 0) && (str_ptr[i] != '\0')); i--)
+		{
+			/* Clean white spaces from beginning */
+			if (str_ptr[i] == ' ')
+			{
+				/* Position where char is located */
+				str_ptr[i] = '\0';
+				delta_size = (str_sz - i);
+				continue;
+			}
+			else
+				break;
+
+			continue;
+		}
+
+		/* Adjust current line size */
+		if (delta_size > -1)
+			str_arr->data->offsetarr[_count_]	-= delta_size;
+
+		continue;
 	}
 
 	return;

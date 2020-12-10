@@ -233,7 +233,7 @@ int CommEvDNSGetHostByName(EvDNSResolverBase *resolv_base, char *host, CommEvDNS
 	memcpy(&pending_query->retransmit_tv, current_time_ptr, sizeof(struct timeval));
 
 	/* Build 1035 packet */
-	rfc1035BuildAQuery(host, (char*)&pending_query->rfc1035_request, &pending_query->rfc1035_request_sz, pending_query->slot_id);
+	rfc1035BuildAQuery(host, (char*)&pending_query->rfc1035_request, (size_t*)&pending_query->rfc1035_request_sz, pending_query->slot_id);
 
 	/* Enqueue for writing */
 	DLinkedListAddTail(&resolv_base->pending_req.req_list, &pending_query->node, pending_query);

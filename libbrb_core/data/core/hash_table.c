@@ -94,7 +94,7 @@ BRBHashTable *HashTableNew(HashCmpFunc * cmp_func, int hash_sz, HashHashFunc * h
 	return hid;
 }
 /**************************************************************************************************************************/
-void HashTableAddItem(BRBHashTable *hid, const char *k, void *item)
+BRBHashTableItem *HashTableAddItem(BRBHashTable *hid, const char *k, void *item)
 {
 	unsigned int i;
 	BRBHashTableItem *new;
@@ -115,7 +115,7 @@ void HashTableAddItem(BRBHashTable *hid, const char *k, void *item)
 
 	hid->count++;
 
-	return;
+	return new;
 }
 /**************************************************************************************************************************/
 void HashTableJoinHashItem(BRBHashTable *hid, BRBHashTableItem *lnk)

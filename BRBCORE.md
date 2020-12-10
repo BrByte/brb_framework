@@ -42,6 +42,29 @@ $ cd /usr/ports/security/libssh2
 /usr/ports/security/libssh2$ make install clean
 ```
 
+On linux, update and install packages
+
+```sh
+joe /etc/apt/sources.list
+deb http://ftp.de.debian.org/debian jessie main
+
+wget http://ftp.us.debian.org/debian/pool/main/libk/libkqueue/libkqueue-dev_2.0.3-1.1_armhf.deb
+wget http://ftp.us.debian.org/debian/pool/main/libk/libkqueue/libkqueue0_2.0.3-1.1_armhf.deb 
+apt-install libkqueue0_2.0.3-1.1_armhf.deb
+apt-install libkqueue-dev_2.0.3-1.1_armhf.deb
+```
+
+```sh
+apt-get update
+apt-get install joe
+apt-get install libbsd-dev
+apt-get install zlib1g-dev // libz-dev
+apt-get install libevent-dev
+apt-get install libkqueue-dev
+apt-get install libssh2-1-dev
+apt-get install libssl1.0-dev
+
+```
 
 ### Build & Install
 
@@ -50,6 +73,14 @@ To compile lib_brbcore, download or clone the source, and go to *lib_brbcore* di
 ```sh
 $ cd ./brb_framework/lib_brbcore
 ./brb_framework/lib_brbcore$ make
+./brb_framework/lib_brbcore$ make install
+```
+On linux, before make
+```sh
+$
+./brb_framework/lib_brbcore$ rm Makefile
+./brb_framework/lib_brbcore$ cp Makefile.linux Makefile
+./brb_framework/lib_brbcore$ make  
 ./brb_framework/lib_brbcore$ make install
 ```
 

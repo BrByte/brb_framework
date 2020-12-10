@@ -124,22 +124,35 @@ int EvAIOReqTransform_CryptoDisable(void *transform_info_ptr)
 /**************************************************************************************************************************/
 char *EvAIOReqTransform_RC4_MD5_DataHashString(MemBuffer *transformed_mb)
 {
-	BRB_MD5_CTX md5_ctx;
-	char *ret_ptr 		= (char*)&md5_ctx.string;
+//	BRB_MD5_CTX md5_ctx;
+//	char *ret_ptr 		= (char*)&md5_ctx.string;
+//
+//	char *known_string_ptr		= NULL;
+//	char *digest_ptr			= NULL;
+//
+//	known_string_ptr	= ((char*)transformed_mb->data + sizeof(unsigned long));
+//	digest_ptr			= ((char*)transformed_mb->data + sizeof(unsigned long) + 5);
+//
+//	/* Digest DATA */
+//	memset(&md5_ctx, 0, sizeof(md5_ctx));
+//	BRB_MD5Init(&md5_ctx);
+//	BRB_MD5Update(&md5_ctx, MemBufferDeref(transformed_mb), MemBufferGetSize(transformed_mb));
+//	BRB_MD5Final(&md5_ctx);
+//
+//	return ret_ptr;
 
-	char *known_string_ptr		= NULL;
-	char *digest_ptr			= NULL;
+	/*
+	 * event/aio/ev_kq_aio_transform.c:142:9: warning: function returns address of local variable [-Wreturn-local-addr]
+  return ret_ptr;
+         ^~~~~~~
+event/aio/ev_kq_aio_transform.c:127:14: note: declared here
+  BRB_MD5_CTX md5_ctx;
+              ^~~~~~~
+	 *
+	 */
 
-	known_string_ptr	= ((char*)transformed_mb->data + sizeof(unsigned long));
-	digest_ptr			= ((char*)transformed_mb->data + sizeof(unsigned long) + 5);
+	return NULL;
 
-	/* Digest DATA */
-	memset(&md5_ctx, 0, sizeof(md5_ctx));
-	BRB_MD5Init(&md5_ctx);
-	BRB_MD5Update(&md5_ctx, MemBufferDeref(transformed_mb), MemBufferGetSize(transformed_mb));
-	BRB_MD5Final(&md5_ctx);
-
-	return ret_ptr;
 }
 /**************************************************************************************************************************/
 int EvAIOReqTransform_RC4_MD5_DataValidate(MemBuffer *transformed_mb)

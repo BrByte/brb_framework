@@ -511,7 +511,7 @@ static int CommEvSerialEventRead(int fd, int can_read_sz, int thrd_id, void *cb_
 				fd, serial_port->device_name_str, terminator_off, data_sz);
 
 		/* Log data */
-		EvKQBaseLogHexDump(data_ptr, data_sz, 8, 4);
+//		EvKQBaseLogHexDump(data_ptr, data_sz, 8, 4);
 
 		if ((terminator_off > 0) && (terminator_off < data_sz))
 		{
@@ -622,8 +622,8 @@ static int CommEvSerialEventWrite(int fd, int can_write_sz, int thrd_id, void *c
 		return total_wrote_sz;
 	}
 
-	KQBASE_LOG_PRINTF(serial_port->log_base, LOGTYPE_DEBUG, LOGCOLOR_YELLOW, "FD [%d] - Wrote [%d]\n", fd, wrote_sz);
-	EvKQBaseLogHexDump(data_ptr, wrote_sz, 8, 4);
+//	KQBASE_LOG_PRINTF(serial_port->log_base, LOGTYPE_DEBUG, LOGCOLOR_YELLOW, "FD [%d] - Wrote [%d]\n", fd, wrote_sz);
+//	EvKQBaseLogHexDump(data_ptr, wrote_sz, 8, 4);
 
 	/* Write_ok, update offset and counter */
 	cur_aio_req->data.offset								+= wrote_sz;

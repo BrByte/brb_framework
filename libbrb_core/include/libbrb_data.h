@@ -75,9 +75,10 @@
 #include <termios.h>
 #include <assert.h>
 #include <math.h>
+#include <zlib.h>
 
 /* Linux portable code */
-#define IS_LINUX 0
+//#define IS_LINUX 0
 
 #define _POSIX_C_SOURCE 200809L
 //#define _POSIX_C_SOURCE 199309L
@@ -92,8 +93,8 @@
 #define BRB_REALLOC(ptr_dst, ptr_src, size) ptr_dst = realloc(ptr_src, size)
 #define BRB_STRDUP(ptr_dst, ptr_src) 		ptr_dst = strdup(ptr_src)
 #define BRB_FREE(ptr) 						if(ptr) free(ptr)
-#define BRB_SKIP_WHITESPACES(str) while ((*str == 13) || (*str == 10) || (*str == 9) || (*str == 32) || (*str == 11)) str++;
-#define BRB_SKIP_ZEROSTR(str) while (str && *str == '0') str++;
+#define BRB_SKIP_WHITESPACES(str)			while ((*str == 13) || (*str == 10) || (*str == 9) || (*str == 32) || (*str == 11)) str++;
+#define BRB_SKIP_ZEROSTR(str)				while (str && *str == '0') str++;
 #define BRB_CSTRING_TOUPPER(str) {int _i_ = 0;  while (str[_i_] != '\0') {	if (str[_i_] >= 'a' && str[_i_] <= 'z')	 str[_i_] -= 32; _i_++;	} }
 #define BRB_CSTRING_TOLOWER(str) {int _i_ = 0;  while (str[_i_] != '\0') {	if (str[_i_] >= 'A' && str[_i_] <= 'Z')	 str[_i_] += 32; _i_++;	} }
 #define BRB_CSTRING_TOTOKEN(str, token, off) {int _i_ = 0;  while (str[_i_] != '\0') {	if (str[_i_] == token) { str += _i_ + off; break;  } _i_++; } }
@@ -399,9 +400,15 @@ typedef int DLinkedListFilterNode(DLinkedListNode *node, char *filter_key, char 
 void DLinkedListInit(DLinkedList *list, LibDataThreadSafeType type);
 void DLinkedListReset(DLinkedList *list);
 void DLinkedListAddDebug(DLinkedList *list, DLinkedListNode *node, void *data);
+void DLinkedListAddHead(DLinkedList *list, DLinkedListNode *node, void *data);
 void DLinkedListAdd(DLinkedList *list, DLinkedListNode *node, void *data);
 void DLinkedListAddTailDebug(DLinkedList *list, DLinkedListNode *node, void *data);
 void DLinkedListAddTail(DLinkedList *list,  DLinkedListNode *node, void *data);
+void DLinkedListAddBefore(DLinkedList *list, DLinkedListNode *node_pos, DLinkedListNode *node_new, void *data);
+void DLinkedListAddAfter(DLinkedList *list, DLinkedListNode *node_pos, DLinkedListNode *node_new, void *data);
+void DLinkedListAddPos(DLinkedList *list, unsigned long pos, DLinkedListNode *node, void *data);
+void DLinkedListMoveToTail(DLinkedList *list, DLinkedListNode *node);
+void DLinkedListMoveToHead(DLinkedList *list, DLinkedListNode *node);
 void DLinkedListDeleteDebug(DLinkedList *list, DLinkedListNode *node);
 void DLinkedListDelete(DLinkedList *list, DLinkedListNode *node);
 void *DLinkedListPopTail(DLinkedList *list);
@@ -501,6 +508,7 @@ int MemBufferUnlock(MemBuffer *mb_ptr);
 unsigned long MemBufferGetSize(MemBuffer *mb_ptr);
 unsigned long MemBufferGetCapacity(MemBuffer *mb_ptr);
 int MemBufferShrinkToToken(MemBuffer *mb_ptr, char token);
+char* MemBufferLastCharGrab(MemBuffer *mb_ptr);
 void MemBufferRemoveLastChar(MemBuffer *mb_ptr);
 void MemBufferPutNULLTerminator(MemBuffer *mb_ptr);
 int MemBufferIsInit(MemBuffer *mb_ptr);
@@ -516,9 +524,12 @@ int MemBufferPWriteToFD(MemBuffer *mb_ptr, unsigned long mb_offset, unsigned lon
 int MemBufferPWriteToFile(MemBuffer *mb_ptr, unsigned long mb_offset, unsigned long file_offset, char *filepath);
 int MemBufferOffsetWrite(MemBuffer *mb_ptr, unsigned long offset, void *data, unsigned long data_sz);
 int MemBufferOffsetWriteToFile(MemBuffer *mb_ptr, unsigned long offset, char *filepath);
+int MemBufferMmapWriteToFile(MemBuffer *mb_ptr, char *filepath);
+MemBuffer *MemBufferMmapFile(char *filepath);
 MemBuffer *MemBufferReadOnlyMmapFile(char *filepath);
 MemBuffer *MemBufferReadFromFile(char *filepath);
-long MemBufferReadFromFileOffseted(MemBuffer *mb_ptr, unsigned long file_offset, unsigned long data_sz, char *filepath);
+MemBuffer *MemBufferReadFromBigFile(char *filepath);
+long MemBufferReadFromFileOffseted(MemBuffer *mb_ptr, unsigned long file_offset, long data_sz, char *filepath);
 long MemBufferPReadFromFD(MemBuffer *mb_ptr, unsigned long file_offset, unsigned long data_sz, int fd);
 long MemBufferReadFromFD(MemBuffer *mb_ptr, unsigned long data_sz, int fd);
 long MemBufferAppendFromFD(MemBuffer *mb_ptr, unsigned long data_sz, int fd, int flags);
@@ -543,6 +554,8 @@ int MemBufferMetaDataPack(MemBuffer *mb_ptr, MetaData *dst_metadata, unsigned lo
 int MemBufferMetaDataUnPack(MemBuffer *mb_ptr, MemBuffer *raw_metadata_mb);
 MemBuffer *MemBufferMetaDataPackToMB(MemBuffer *mb_ptr, unsigned long item_sub_id);
 MemBuffer *MemBufferMetaDataUnPackFromMB(MemBuffer *raw_metadata_mb);
+int MemBufferGzipInflate(MemBuffer *in_mb, int in_offset, MemBuffer *out_mb);
+int MemBufferGzipDeflate(MemBuffer *in_mb, int in_offset, MemBuffer *out_mb);
 
 
 /**************************************************************************************************************************/
@@ -638,12 +651,15 @@ int StringArrayGetPosLinePrefixFmt(StringArray *str_arr, char *data, ...);
 int StringArrayGetPosLineFmt(StringArray *str_arr, char *data, ...);
 int StringArrayStrStr(StringArray *str_arr, char *data);
 int StringArrayLineHasPrefix(StringArray *str_arr, char *data);
+int StringArrayHasLineNumeric(StringArray *str_arr, int number);
 int StringArrayHasLine(StringArray *str_arr, char *data);
+int StringArrayHasLinePartial(StringArray *str_arr, char *data, int data_sz);
 int StringArrayHasLineFmt(StringArray *str_arr, char *data, ...);
 StringArray *StringArrayDup(StringArray *str_arr);
 int StringArrayUnique(StringArray *str_arr);
 int StringArrayGetElemCount(StringArray *str_arr);
 void StringArrayStripCRLF(StringArray *str_arr);
+void StringArrayStripWhiteSpaces(StringArray *str_arr);
 int StringArrayProcessBufferLines(char *buffer_str, int buffer_sz, StringArrayProcessBufferLineCBH *cb_handler_ptr, void *cb_data, int min_sz, char *delim);
 char *StringArraySearchVarIntoStrArr(StringArray *data_strarr, char *target_key_str);
 /**************************************************************************************************************************/
@@ -777,6 +793,109 @@ typedef struct _BRB_RC4_State
 
 void BRB_RC4_Init(BRB_RC4_State *state, const unsigned char *key, int keylen);
 void BRB_RC4_Crypt(BRB_RC4_State *state, const unsigned char *inbuf, unsigned char *outbuf, int buflen);
+
+
+/**************************************************************************************************************************/
+/* HashTable V2 STRUCTURES AND PROTOTYPES */
+/**************************************************************************************************************************/
+#define HASHTABLE_V2_MAXKEY_SZ 32
+typedef unsigned int HashTableV2HashFunc(char *, int, int, int);   // key, key_sz, key_seed, max_hash_s
+typedef unsigned int HashTableV2KeyCmpFunc(void *, char *, int); // hash_item, key, key_sz
+
+typedef enum
+{
+	HASHTABLE_HASHFUNC_UNINTIALIZED,
+	HASHTABLE_HASHFUNC_SIMPLE,
+	HASHTABLE_HASHFUNC_MURMUR,
+	HASHTABLE_HASHFUNC_LASTITEM
+} HashTableConfigHashFunc;
+
+typedef struct _HashTableConfig
+{
+	int hashfunc_code;
+	int max_buckets;
+
+	struct
+	{
+		HashTableV2HashFunc *hash;
+		HashTableV2KeyCmpFunc *key_cmp;
+	} func;
+
+	struct
+	{
+		/* Match key size before comparing key */
+		unsigned int key_match_sz:1;
+		/* Do not allow duplicate keys - Search before add */
+		unsigned int item_check_dup:1;
+		/* Bring to front item that hits on bucket */
+		unsigned int item_btf:1;
+		unsigned int thread_safe:1;
+	} flags;
+
+} HashTableConfig;
+
+typedef struct _HashTableV2
+{
+	struct _MemArena *buckets;
+
+	/* Hash primes */
+	int prime_arr[16];
+
+	struct
+	{
+		HashTableV2HashFunc *hash;
+		HashTableV2KeyCmpFunc *key_cmp;
+	} func;
+
+	struct
+	{
+		int max_buckets;
+	} config;
+
+	struct
+	{
+		/* Match key size before comparing key */
+		unsigned int key_match_sz:1;
+		/* Do not allow duplicate keys - Search before add */
+		unsigned int item_check_dup:1;
+		/* Bring to front item that hits on bucket */
+		unsigned int item_btf:1;
+		unsigned int thread_safe:1;
+	} flags;
+
+} HashTableV2;
+
+typedef struct _HashTableBucket
+{
+	DLinkedList list;
+	int id;
+
+	struct
+	{
+		unsigned int active:1;
+	} flags;
+
+} HashTableBucket;
+
+typedef struct _HashTableV2Item
+{
+	DLinkedListNode node;
+	struct _HashTableBucket *bucket;
+	void *data_ptr;
+	struct
+	{
+		char *ptr;
+		int sz;
+	} key;
+
+} HashTableV2Item;
+
+HashTableV2 *HashTableV2New(HashTableConfig *config);
+int HashTableV2Destroy(HashTableV2 *hash_table);
+int HashTableV2ItemAdd(HashTableV2 *hash_table, HashTableV2Item *hash_item, void *data_ptr, char *key_ptr, int key_sz);
+int HashTableV2ItemDel(HashTableV2 *hash_table, HashTableV2Item *hash_item);
+HashTableV2Item *HashTableV2ItemFind(HashTableV2 *hash_table, char *key_ptr, int key_sz);
+
 /**************************************************************************************************************************/
 /* HashTable STRUCTURES AND PROTOTYPES */
 /**************************************************************************************************************************/
@@ -827,7 +946,7 @@ typedef struct _BRBHashTable
 /*************************************************************************/
 BRBHashTable *HashTableNew(HashCmpFunc *, int, HashHashFunc *);
 void HashTablePrint(BRBHashTable *hid);
-void HashTableAddItem(BRBHashTable * hid, const char *k, void *item);
+BRBHashTableItem *HashTableAddItem(BRBHashTable *hid, const char *k, void *item);
 void HashTableJoinHashItem(BRBHashTable *, BRBHashTableItem *);
 int HashTableRemoveItem(BRBHashTable * hid, BRBHashTableItem * hl, int FreeLink);
 int HashTablePrime(int n);
@@ -1236,6 +1355,11 @@ typedef struct _MemArena
 	long size[MEMARENA_SIZE_LASTITEM];
 	long slot[MEMARENA_SLOT_LASTITEM];
 	char **data;
+
+	struct
+	{
+		unsigned int thread_safe:1;
+	} flags;
 } MemArena;
 
 typedef struct _MemArenaSlotHeader
@@ -1252,6 +1376,7 @@ typedef struct _MemArenaSlotHeader
 MemArena *MemArenaNew(long arena_size, long slot_size, long slot_count, int type);
 void MemArenaClean(MemArena *mem_arena);
 void MemArenaDestroy(MemArena *mem_arena);
+void *MemArenaFindByID(MemArena *mem_arena, long id);
 void *MemArenaGrabByID(MemArena *mem_arena, int long);
 void MemArenaReleaseByID(MemArena *mem_arena, long id);
 void MemArenaLockByID(MemArena *mem_arena, long id);
@@ -1359,6 +1484,10 @@ void queueDataDestroy(QueueData *queue_data);
 #define MEMBUFFER_JSON_ADD_HEX_NOMASK(mb, key, value)	MemBufferPrintf(mb, "\"%s\": \"%X\"", key, value)
 #define MEMBUFFER_JSON_ADD_FLOAT(mb, key, value)		MemBufferPrintf(mb, "\"%s\": %.2f", key, value)
 #define MEMBUFFER_JSON_ADD_STR_FMT(mb, key, fmt, ...)	MemBufferPrintf(mb, "{ \"text\": \"%s\", \"value\": "fmt", \"leaf\": true }", key, ##__VA_ARGS__)
+#define MEMBUFFER_JSON_ADD_MAC_STR(mb, key, mac)		MemBufferPrintf(mb, "\"%s\": \"%02X:%02X:%02X:%02X:%02X:%02X\"", key, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
+#define MEMBUFFER_JSON_BEGIN_RESULTS(mb, total)			MemBufferPrintf(mb, "{\"success\":true, \"total\": %d, \"results\": [", total)
+#define MEMBUFFER_JSON_FINISH_RESULTS(mb)				MemBufferAdd(mb, "]}", 2)
+
 
 /*************************************************************************/
 /* RADIX TREE  */
@@ -1680,9 +1809,9 @@ int IPv4TableItemDelByInAddr(IPv4Table *table, struct in_addr *addr);
 /*************************************************************************/
 
 typedef struct {
-    uint32_t state[5];
-    uint32_t count[2];
-    uint8_t  buffer[64];
+	uint32_t state[5];
+	uint32_t count[2];
+	uint8_t  buffer[64];
 } BrbSha1Ctx;
 
 #define BRB_SHA1_DIGEST_SIZE 20
@@ -1697,12 +1826,12 @@ void BrbSha1_Transform(uint32_t state[5], const uint8_t buffer[64]);
 /*************************************************************************/
 typedef struct _BrbIpFamily
 {
-    sa_family_t family;
+	sa_family_t family;
 
-    union {
-    	struct in_addr ip4;
+	union {
+		struct in_addr ip4;
 		struct in6_addr ip6;
-    } u;
+	} u;
 } BrbIpFamily;
 
 enum {
@@ -1714,15 +1843,9 @@ int BrbHexToStr(char *hex, int hex_sz, char *dst_buf, int dst_buf_sz);
 char *BrbHexToStrStatic(char *hex, int hex_sz);
 int BrbStrReplaceAllNonAlpha(char *buf_str, int buf_sz);
 char *BrbStrAddSlashes(char *src_str, int src_sz);
+char *BrbStrAddJSONSlashes(char *src_str, int src_sz);
 int BrbIsValidCpf(char *cpf_str);
 int BrbIsValidCnpj(char *cnpj_str);
-int BrbIsValidIpCidr(char *ip_cidr_str);
-int BrbIsValidIp(char *ip_addr_str);
-int BrbIsValidIpToSockAddr(char *ip_addr_str, struct sockaddr_storage *target_sockaddr);
-int BrbIsValidIpV4(char *ip_addr_str, struct in_addr *ip4);
-int BrbIpFamilyParse(const char *ip_str, BrbIpFamily *ip_family, unsigned char allow);
-int BrbNetworkSockNtop(char *ret_data_ptr, int ret_maxlen, const struct sockaddr *sa, size_t salen);
-int BrbNetworkSockMask(char *ret_data_ptr, int ret_maxlen, const struct sockaddr *sa);
 
 int BrbIsNumeric(char *str);
 int BrbIsHex(char *str);
@@ -1735,10 +1858,41 @@ char *BrbStrSkipNoNumeric(char *buffer_str, int buffer_sz);
 unsigned int BrbSimpleHashStrFmt(unsigned int seed, const char *key, ...);
 unsigned int BrbSimpleHashStr(const char *key, unsigned int len, unsigned int seed);
 unsigned char *BrbMacStrToOctedDup(char *mac_str);
+int BrbStrToLower(char *str_ptr);
+int BrbStrCompare(char *strcur, char *strcmp);
+int BrbStrFindSubStrReverse(char *buffer_str, int buffer_sz, char *substring_str, int substring_sz);
+
+unsigned int BrbTimeLt(const struct timeval *a, const struct timeval *b);
+void BrbTimeSub(const struct timeval *a, const struct timeval *b, struct timeval *result);
+
+#define	satosin(sa)		((struct sockaddr_in *)(sa))
+#define	satosin6(sa)	((struct sockaddr_in6 *)(sa))
+#define	sin6tosa(sin6)	((struct sockaddr *)(sin6))
+
+int BrbNw_IpMask(struct sockaddr_storage *addr, struct sockaddr_storage *mask);
+int BrbNw_IpBroadCast(struct sockaddr_storage *addr, struct sockaddr_storage *mask);
+int BrbNw_IpCompareMasked(struct sockaddr_storage *addr1, struct sockaddr_storage *addr2, struct sockaddr_storage *mask);
+int BrbNw_IpCompare(struct sockaddr_storage *addr1, struct sockaddr_storage *addr2);
+int BrbNw_Ipv4Mask(struct in_addr *addr, struct in_addr *mask);
+int BrbNw_Ipv4BroadCast(struct in_addr *addr, struct in_addr *mask);
+int BrbNw_Ipv6Mask(struct in6_addr *addr, struct in6_addr *mask);
+int BrbNw_Ipv6BroadCast(struct in6_addr *addr, struct in6_addr *mask);
+int BrbNw_Ipv4CompareMasked(const struct in_addr *addr1, const struct in_addr *addr2, const struct in_addr *mask);
+int BrbNw_Ipv6CompareMasked(const struct in6_addr *addr1, const struct in6_addr *addr2, const struct in6_addr *mask);
+void BrbNw_Ipv4Netmask(struct in_addr *netmask, int mask);
+void BrbNw_Ipv6Netmask(struct in6_addr *netmask, int mask);
+
+int BrbIsValidIpCidr(char *ip_cidr_str);
+int BrbIsValidIp(char *ip_addr_str);
+int BrbIsValidIpToSockAddr(char *ip_addr_str, struct sockaddr_storage *target_sockaddr);
+int BrbIsValidIpV4(char *ip_addr_str, struct in_addr *ip4);
+int BrbIpFamilyParse(const char *ip_str, BrbIpFamily *ip_family, unsigned char allow);
+
+int BrbNetworkSockNtop(char *ret_data_ptr, int ret_maxlen, const struct sockaddr *sa, size_t salen);
+int BrbNetworkSockMask(char *ret_data_ptr, int ret_maxlen, const struct sockaddr *sa);
 
 #define BRB_COMPARE_NUM(a, b) (a > b) - (a < b)
 #define SORT_COMPARE_NUM(x, y) (((x) > (y)) ? 1 : (((x) == (y)) ? 0 : 0))
-int BrbStrCompare(char *strcur, char *strcmp);
 /*************************************************************************/
 
 #endif

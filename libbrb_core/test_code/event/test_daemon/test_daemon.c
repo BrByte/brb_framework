@@ -39,6 +39,143 @@ int glob_timerid;
 
 static EvBaseKQCBH mainTimerEvent;
 
+///**************************************************************************************************************************/
+//static int CommEvDHCPClientSocketConfig(CommEvDHCPClient *ev_dhcpclient)
+//{
+//	struct ifreq interface;
+//	int op_status;
+//
+//	/* Set it to non_blocking and save it into newly allocated client */
+//	op_status 		= EvKQBaseSocketSetNonBlock(ev_dhcpclient->kq_base, ev_dhcpclient->socket_fd);
+//
+//	/* Failed setting flag */
+//	if (op_status < 0)
+//	{
+//		KQBASE_LOG_PRINTF(ev_dhcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed setting REUSE_ADDR on FD [%d] - ERRNO [%d / %s]\n", ev_dhcpclient->socket_fd, errno, strerror(errno));
+//		close(ev_dhcpclient->socket_fd);
+//		return -1;
+//	}
+//
+//	/* Set socket to REUSE_ADDR flag */
+//	op_status 		= EvKQBaseSocketSetReuseAddr(ev_dhcpclient->kq_base, ev_dhcpclient->socket_fd);
+//
+//	/* Failed setting flag */
+//	if (op_status < 0)
+//	{
+//		KQBASE_LOG_PRINTF(ev_dhcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed setting REUSE_ADDR on FD [%d] - ERRNO [%d / %s]\n", ev_dhcpclient->socket_fd, errno, strerror(errno));
+//		close(ev_dhcpclient->socket_fd);
+//		return -2;
+//	}
+//
+//	/* Set socket to REUSE_ADDR flag */
+//	op_status 		= EvKQBaseSocketSetReusePort(ev_dhcpclient->kq_base, ev_dhcpclient->socket_fd);
+//
+//	/* Failed setting flag */
+//	if (op_status < 0)
+//	{
+//		KQBASE_LOG_PRINTF(ev_dhcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed setting REUSE_PORT on FD [%d] - ERRNO [%d / %s]\n", ev_dhcpclient->socket_fd, errno, strerror(errno));
+//		close(ev_dhcpclient->socket_fd);
+//		return -3;
+//	}
+//
+//	/* Set socket to REUSE_ADDR flag */
+//	op_status 		= EvKQBaseSocketSetBroadcast(ev_dhcpclient->kq_base, ev_dhcpclient->socket_fd);
+//
+//	/* Failed setting flag */
+//	if (op_status < 0)
+//	{
+//		KQBASE_LOG_PRINTF(ev_dhcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed setting REUSE_PORT on FD [%d] - ERRNO [%d / %s]\n", ev_dhcpclient->socket_fd, errno, strerror(errno));
+//		close(ev_dhcpclient->socket_fd);
+//		return -4;
+//	}
+//
+//	/* Set socket to REUSE_ADDR flag */
+//	op_status 		= CommEvDHCPClientSocketBind(ev_dhcpclient->kq_base, ev_dhcpclient->socket_fd, 0, NULL, DHCP_CLIENT_PORT);
+//
+//	/* Failed setting flag */
+//	if (op_status < 0)
+//	{
+//		KQBASE_LOG_PRINTF(ev_dhcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed setting REUSE_PORT on FD [%d] - ERRNO [%d / %s]\n", ev_dhcpclient->socket_fd, errno, strerror(errno));
+//		close(ev_dhcpclient->socket_fd);
+//		return -5;
+//	}
+//
+//	return 0;
+//}
+///**************************************************************************************************************************/
+//static int CommEvDHCPClientSocketBind(EvKQBase *kq_base, int fd, int v6, void *bind_addr, int port)
+//{
+//	struct sockaddr_storage addr_me;
+//	struct ifreq interface;
+//	int op_status;
+//
+//	/* Initialize receiving socket on the device chosen */
+//	memset(&addr_me, 0, sizeof(struct sockaddr_storage));
+//
+////	/* bind socket to interface */
+////#if defined(__linux__)
+////
+////	strncpy(interface.ifr_ifrn.ifrn_name,network_interface_name,IFNAMSIZ);
+////	if(setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, (char *)&interface, sizeof(interface)) < 0)
+////	{
+////		printf("Error: Could not bind socket to interface %s.  Check your privileges...\n",network_interface_name);
+////		exit(STATE_UNKNOWN);
+////	}
+////
+////#	else
+////		strncpy(interface.ifr_name,network_interface_name,IFNAMSIZ);
+////#	endif
+//
+//	/* Set up the address we're going to bind to. */
+//	if (v6)
+//	{
+//		addr_me.ss_family				= AF_INET6;
+//#if defined(__linux__)
+//		addr_me.ss_len					= sizeof(struct sockaddr_in6);
+//#endif
+//		satosin6(&addr_me)->sin6_port	= htons(port);
+//		satosin6(&addr_me)->sin6_addr 	= in6addr_any;
+//
+//		/* Copy BINDIP if selected */
+//		if (bind_addr)
+//			memcpy(&satosin6(&addr_me)->sin6_addr, bind_addr, sizeof(struct in6_addr));
+//
+//		op_status 	= bind(fd, (struct sockaddr *)&addr_me, sizeof(struct sockaddr_in6));
+//	}
+//	else
+//	{
+//		addr_me.ss_family				= AF_INET;
+//#if defined(__linux__)
+//		addr_me.ss_len					= sizeof(struct sockaddr_in);
+//#endif
+//		satosin(&addr_me)->sin_port			= htons(port);
+//		satosin(&addr_me)->sin_addr.s_addr	= INADDR_ANY;
+//
+//		/* Copy BINDIP if selected */
+//		if (bind_addr)
+//			memcpy(&((struct sockaddr_in *)&addr_me)->sin_addr, bind_addr, sizeof(struct in_addr));
+//
+//		op_status 	= bind(fd, (struct sockaddr *)&addr_me, sizeof(struct sockaddr_in));
+//	}
+//
+//	/* Bind to UDP port */
+//	if (-1 == op_status)
+//	{
+//		char ip_str[64] = {0};
+//
+//		if (v6)
+//			inet_ntop(AF_INET6, &satosin6(&addr_me)->sin6_addr, (char *)&ip_str, INET6_ADDRSTRLEN);
+//		else
+//			inet_ntop(AF_INET, &satosin(&addr_me)->sin_addr, (char *)&ip_str, INET_ADDRSTRLEN);
+//
+//		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed binding on FD [%d] - ADDR [%d]-[%s] - ERRNO [%d / %s]\n",
+//				fd, v6, (char *)&ip_str, errno, strerror(errno));
+//		close(fd);
+//		return -4;
+//	}
+//
+//	return 0;
+//}
 /**************************************************************************************************************************/
 int main(int argc, char **argv)
 {

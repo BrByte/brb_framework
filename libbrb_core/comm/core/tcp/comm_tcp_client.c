@@ -63,6 +63,10 @@ static int CommEvTCPClientCheckIfNeedDNSLookup(CommEvTCPClient *ev_tcpclient);
 static int CommEvTCPClientProcessBuffer(CommEvTCPClient *ev_tcpclient, int read_sz, int thrd_id, char *read_buf, int read_buf_sz);
 static int CommEvTCPClientSelfSyncReadBuffer(CommEvTCPClient *ev_tcpclient, int orig_read_sz, int thrd_id);
 static int CommEvTCPClientTimersCancelAll(CommEvTCPClient *ev_tcpclient);
+static int CommEvTCPClientSSLDataReset(CommEvTCPClient *ev_tcpclient);
+static int CommEvTCPClientSSLDataInit(CommEvTCPClient *ev_tcpclient, CommEvTCPClientConf *ev_tcpclient_conf, char *sni_str);
+static int CommEvTCPClientSSLDataClean(CommEvTCPClient *ev_tcpclient);
+
 static EvBaseKQObjDestroyCBH CommEvTCPClientObjectDestroyCBH;
 static EvBaseKQJobCBH CommEvTCPClientSSLShutdownJob;
 
@@ -187,26 +191,7 @@ void CommEvTCPClientClean(CommEvTCPClient *ev_tcpclient)
 	EvKQBaseObjectUnregister(&ev_tcpclient->kq_obj);
 
 	/* Release SSL related objects */
-	if (COMM_CLIENTPROTO_SSL == ev_tcpclient->cli_proto)
-	{
-		if (ev_tcpclient->ssldata.ssl_handle)
-		{
-			SSL_shutdown (ev_tcpclient->ssldata.ssl_handle);
-			SSL_free (ev_tcpclient->ssldata.ssl_handle);
-			ev_tcpclient->ssldata.ssl_handle = NULL;
-		}
-		if (ev_tcpclient->ssldata.ssl_context)
-		{
-			SSL_CTX_free (ev_tcpclient->ssldata.ssl_context);
-			ev_tcpclient->ssldata.ssl_context = NULL;
-		}
-
-		if (ev_tcpclient->ssldata.x509_cert)
-		{
-			X509_free(ev_tcpclient->ssldata.x509_cert);
-			ev_tcpclient->ssldata.x509_cert = NULL;
-		}
-	}
+	CommEvTCPClientSSLDataClean(ev_tcpclient);
 
 	/* Cancel pending DNS request */
 	if (ev_tcpclient->dnsreq_id	> -1)
@@ -307,52 +292,7 @@ int CommEvTCPClientConnect(CommEvTCPClient *ev_tcpclient, CommEvTCPClientConf *e
 
 	/* Create a new SSL client context if there is NONE */
 	if (COMM_CLIENTPROTO_SSL == ev_tcpclient->cli_proto)
-	{
-		if (!ev_tcpclient->ssldata.ssl_context)
-			ev_tcpclient->ssldata.ssl_context	= SSL_CTX_new(SSLv23_client_method());
-
-		/* Failed creating SSL context */
-		if (!ev_tcpclient->ssldata.ssl_context)
-		{
-			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - Failed creating SSL_CONTEXT\n", ev_tcpclient->socket_fd);
-			return 0;
-		}
-
-		/* NULL CYPHER asked */
-		if (ev_tcpclient->flags.ssl_null_cypher)
-		{
-			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - Using NULL CYPHER SSL\n", ev_tcpclient->socket_fd);
-
-			if (!SSL_CTX_set_cipher_list(ev_tcpclient->ssldata.ssl_context, "aNULL"))
-			{
-				KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - Failed setting NULL CIPHER\n", ev_tcpclient->socket_fd);
-				return 0;
-			}
-		}
-
-		if (!ev_tcpclient->ssldata.ssl_handle)
-			ev_tcpclient->ssldata.ssl_handle	= SSL_new(ev_tcpclient->ssldata.ssl_context);
-
-		/* Failed creating SSL HANDLE */
-		if (!ev_tcpclient->ssldata.ssl_handle)
-		{
-			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - Failed creating SSL_HANDLE\n", ev_tcpclient->socket_fd);
-			return 0;
-		}
-
-		/* Load TLS/SNI extension */
-		if (ev_tcpclient_conf->sni_hostname_str)
-		{
-			/* Save a copy of HOSTNAME for TLS Server Name Indication */
-			strncpy((char*)&ev_tcpclient->cfg.sni_hostname, ev_tcpclient_conf->sni_hostname_str, sizeof(ev_tcpclient->cfg.sni_hostname));
-			SSL_set_tlsext_host_name(ev_tcpclient->ssldata.ssl_handle, ev_tcpclient_conf->sni_hostname_str);
-		}
-
-		/* Attach to SOCKET_FD */
-		SSL_set_fd(ev_tcpclient->ssldata.ssl_handle, ev_tcpclient->socket_fd);
-		ev_tcpclient->ssldata.ssl_negotiatie_trycount	= 0;
-		ev_tcpclient->flags.ssl_enabled					= 1;
-	}
+		CommEvTCPClientSSLDataInit(ev_tcpclient, ev_tcpclient_conf, NULL);
 
 	/* Set description */
 	EvKQBaseFDDescriptionSetByFD(ev_tcpclient->kq_base, ev_tcpclient->socket_fd, "BRB_EV_COMM - TCP_CLIENT - [%s:%d] - SSL [%d]",
@@ -441,10 +381,12 @@ void CommEvTCPClientResetFD(CommEvTCPClient *ev_tcpclient)
 	else
 		ev_tcpclient->socket_fd = EvKQBaseSocketTCPNew(ev_tcpclient->kq_base);
 
-	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - Reset to NEW_FD [%d]\n", old_socketfd, ev_tcpclient->socket_fd);
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - Reset to NEW_FD [%d] - UNIX [%d]\n", old_socketfd, ev_tcpclient->socket_fd, ev_tcpclient->cfg.flags.unix_socket);
 
 	/* Set it to non_blocking and save it into newly allocated client */
 	EvKQBaseSocketSetNonBlock(ev_tcpclient->kq_base, ev_tcpclient->socket_fd);
+
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "CLI_PROTO [%d]\n", ev_tcpclient->cli_proto);
 
 	/* Set context to new FD and reset negotiation count */
 	if ((COMM_CLIENTPROTO_SSL == ev_tcpclient->cli_proto) && (ev_tcpclient->ssldata.ssl_handle))
@@ -482,17 +424,18 @@ int CommEvTCPClientReconnect(CommEvTCPClient *ev_tcpclient)
 	if (!ev_tcpclient)
 		return 0;
 
-	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Will try reconnect\n", ev_tcpclient->socket_fd);
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Will try reconnect - STATE [%d]\n",
+			ev_tcpclient->socket_fd, ev_tcpclient->socket_state);
 
 	if ((ev_tcpclient->socket_state == COMM_CLIENT_STATE_CONNECTING) || (ev_tcpclient->socket_state == COMM_CLIENT_STATE_CONNECTED_NEGOTIATING_SSL))
 	{
-		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Already connecting\n", ev_tcpclient->socket_fd);
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_CYAN, "FD [%d] - Already connecting\n", ev_tcpclient->socket_fd);
 		return 0;
 	}
 
 	if (ev_tcpclient->socket_state == COMM_CLIENT_STATE_CONNECTED)
 	{
-		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Will not reconnect, already connected\n", ev_tcpclient->socket_fd);
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_CYAN, "FD [%d] - Will not reconnect, already connected\n", ev_tcpclient->socket_fd);
 		return 0;
 	}
 
@@ -501,7 +444,10 @@ int CommEvTCPClientReconnect(CommEvTCPClient *ev_tcpclient)
 
 	/* Failed creating SOCKET, schedule new try */
 	if (ev_tcpclient->socket_fd < 0)
+	{
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_CYAN, "FD [%d] - Failed creating socket - ERRNO [%d]\n", ev_tcpclient->socket_fd, errno);
 		goto failed;
+	}
 
 	/* If we are connecting to a HOSTNAME FQDN, check if our DNS entry is expired, or if upper layers asked for new lookup on reconnect */
 	if ( (ev_tcpclient->flags.need_dns_lookup) && (ev_tcpclient->flags.reconnect_new_dnslookup || (ev_tcpclient->dns.expire_ts == -1) ||
@@ -544,7 +490,7 @@ int CommEvTCPClientReconnect(CommEvTCPClient *ev_tcpclient)
 	/* Flag to reconnect on FAIL not set */
 	if (!ev_tcpclient->flags.reconnect_on_fail)
 	{
-		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - Will not auto-reconnect, flag is disabled\n", ev_tcpclient->socket_fd);
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_GREEN, "FD [%d] - Will not auto-reconnect, flag is disabled\n", ev_tcpclient->socket_fd);
 		return 0;
 	}
 
@@ -553,7 +499,7 @@ int CommEvTCPClientReconnect(CommEvTCPClient *ev_tcpclient)
 			((ev_tcpclient->retry_times.reconnect_on_fail_ms > 0) ? ev_tcpclient->retry_times.reconnect_on_fail_ms : COMM_TCP_CLIENT_RECONNECT_FAIL_DEFAULT_MS),
 			CommEvTCPClientReconnectTimer, ev_tcpclient);
 
-	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Schedule RECONNECT_FAIL at TIMER_ID [%d]\n",
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_CYAN, "FD [%d] - Schedule RECONNECT_FAIL at TIMER_ID [%d]\n",
 			ev_tcpclient->socket_fd, ev_tcpclient->timers.reconnect_on_fail_id);
 	return 0;
 }
@@ -974,9 +920,11 @@ void CommEvTCPClientAddrInitUnix(CommEvTCPClient *ev_tcpclient, char *unix_path)
 
 	/* Fill in the stub sockaddr_in structure */
 	ev_tcpclient->dst_addr.ss_family	= AF_UNIX;
-	ev_tcpclient->dst_addr.ss_len 		= sizeof(struct sockaddr_un);
 
+#ifndef IS_LINUX
+	ev_tcpclient->dst_addr.ss_len 		= sizeof(struct sockaddr_un);
 //	unix_addr->sun_len 					= sizeof(struct sockaddr_un);
+#endif
 
 	strncpy(unix_addr->sun_path, unix_path, sizeof(unix_addr->sun_path));
 
@@ -1485,7 +1433,7 @@ int CommEvTCPClientEventSSLNegotiate(int fd, int data_sz, int thrd_id, void *cb_
 	EvBaseKQFileDesc *kq_fd			= EvKQBaseFDGrabFromArena(ev_base, fd);
 	int op_status;
 
-	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_YELLOW, "FD [%d] - SSL_HANDSHAKE try [%d]\n",
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - SSL_HANDSHAKE try [%d]\n",
 			ev_tcpclient->socket_fd, ev_tcpclient->ssldata.ssl_negotiatie_trycount);
 
 	/* Increment count */
@@ -1493,7 +1441,11 @@ int CommEvTCPClientEventSSLNegotiate(int fd, int data_sz, int thrd_id, void *cb_
 
 	/* Too many negotiation retries, give up */
 	if (ev_tcpclient->ssldata.ssl_negotiatie_trycount > 50)
+	{
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_YELLOW, "FD [%d] - SSL_HANDSHAKE try [%d] - Too many retries, failing..\n",
+				ev_tcpclient->socket_fd, ev_tcpclient->ssldata.ssl_negotiatie_trycount);
 		goto negotiation_failed;
+	}
 
 	/* Clear libSSL errors and invoke SSL handshake mechanism */
 	ERR_clear_error();
@@ -1503,6 +1455,11 @@ int CommEvTCPClientEventSSLNegotiate(int fd, int data_sz, int thrd_id, void *cb_
 	if (op_status <= 0)
 	{
 		int ssl_error = SSL_get_error(ev_tcpclient->ssldata.ssl_handle, op_status);
+		char err_buf[256];
+		char *reason_str = NULL;
+
+		/* NULL term uninit buffer */
+		err_buf[sizeof(err_buf)  -1] = '\0';
 
 		switch (ssl_error)
 		{
@@ -1517,10 +1474,15 @@ int CommEvTCPClientEventSSLNegotiate(int fd, int data_sz, int thrd_id, void *cb_
 
 		default:
 		{
-			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_YELLOW, "FD [%d] - SSL handshake failed with SSL_ERROR [%d]\n",
-					ev_tcpclient->socket_fd, ssl_error);
+//			ERR_error_string_n(ssl_error, (char*)&err_buf, sizeof(err_buf));
+//			reason_str = ERR_reason_error_string(ssl_error);
+//
+//			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_YELLOW, "FD [%d] - SSL handshake failed with SSL_ERROR [%u] - [%s / %s]\n",
+//					ev_tcpclient->socket_fd, ssl_error, err_buf, (reason_str ? reason_str : "NULL") );
+
+			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_YELLOW, "FD [%d] - SSL handshake failed with SSL_ERROR [%u]\n", ev_tcpclient->socket_fd, ssl_error);
+
 			goto negotiation_failed;
-			return 0;
 		}
 		}
 	}
@@ -1573,15 +1535,24 @@ int CommEvTCPClientEventSSLNegotiate(int fd, int data_sz, int thrd_id, void *cb_
 	ev_tcpclient->socket_state = COMM_CLIENT_STATE_CONNECT_FAILED_NEGOTIATING_SSL;
 
 	/* Dispatch the internal event */
-	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Dispatch CONNECT\n", ev_tcpclient->socket_fd);
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_CYAN, "FD [%d / %d] - FLAGS [%d / %d] - SSL_NEG_FAIL dispatch CONNECT\n",
+			ev_tcpclient->socket_fd, kq_fd->fd.num, ev_tcpclient->flags.destroy_after_connect_fail, ev_tcpclient->flags.reconnect_on_fail);
+
 	CommEvTCPClientEventDispatchInternal(ev_tcpclient, data_sz, thrd_id, COMM_CLIENT_EVENT_CONNECT);
 
 	/* Closed flag set, we are already destroyed, just bail out */
 	if ((kq_fd->flags.closed) || (kq_fd->flags.closing))
+	{
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_YELLOW, "FD [%d] - SSL_NEG_FAIL on closed FD [%d /%d]\n",
+				kq_fd->fd.num, kq_fd->flags.closed, kq_fd->flags.closing);
 		return 0;
+	}
 
 	/* Internal CLEANUP */
 	CommEvTCPClientInternalDisconnect(ev_tcpclient);
+
+	/* Resetting SSL context */
+	CommEvTCPClientSSLDataReset(ev_tcpclient);
 
 	/* Upper layers want a full DESTROY if CONNECTION FAILS */
 	if (ev_tcpclient->flags.destroy_after_connect_fail)
@@ -1609,7 +1580,7 @@ int CommEvTCPClientEventSSLNegotiate(int fd, int data_sz, int thrd_id, void *cb_
 				((ev_tcpclient->retry_times.reconnect_on_fail_ms > 0) ? ev_tcpclient->retry_times.reconnect_on_fail_ms : COMM_TCP_CLIENT_RECONNECT_FAIL_DEFAULT_MS),
 				CommEvTCPClientReconnectTimer, ev_tcpclient);
 
-		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Schedule RECONNECT_FAIL at TIMER_ID [%d]\n",
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_CYAN, "FD [%d] - Schedule RECONNECT_FAIL at TIMER_ID [%d]\n",
 				ev_tcpclient->socket_fd, ev_tcpclient->timers.reconnect_on_fail_id);
 	}
 
@@ -1751,15 +1722,31 @@ static int CommEvTCPClientEventSSLRead(int fd, int can_read_sz, int thrd_id, voi
 	{
 		ssl_error = SSL_get_error(ev_tcpclient->ssldata.ssl_handle, ssl_bytes_read);
 
+//			SSL_ERROR_NONE                  0
+//			SSL_ERROR_SSL                   1
+//			SSL_ERROR_WANT_READ             2
+//			SSL_ERROR_WANT_WRITE            3
+//			SSL_ERROR_WANT_X509_LOOKUP      4
+//			SSL_ERROR_SYSCALL               5/* look at error stack/return value/errno */
+//			SSL_ERROR_ZERO_RETURN           6
+//			SSL_ERROR_WANT_CONNECT          7
+//			SSL_ERROR_WANT_ACCEPT           8
+//			SSL_ERROR_WANT_ASYNC            9
+//			SSL_ERROR_WANT_ASYNC_JOB       10
+
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - SSL_ERROR [%d]\n", ev_tcpclient->socket_fd, ssl_error);
+
 		switch (ssl_error)
 		{
 		case SSL_ERROR_WANT_READ:
 		{
+			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - SSL_ERROR_WANT_READ [%d]\n", ev_tcpclient->socket_fd, SSL_ERROR_WANT_READ);
 			EvKQBaseSetEvent(ev_tcpclient->kq_base, ev_tcpclient->socket_fd, COMM_EV_READ, COMM_ACTION_ADD_VOLATILE, CommEvTCPClientEventSSLRead, ev_tcpclient);
 			return 0;
 		}
 		case SSL_ERROR_WANT_WRITE:
 		{
+			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - SSL_ERROR_WANT_WRITE [%d]\n", ev_tcpclient->socket_fd, SSL_ERROR_WANT_WRITE);
 			EvKQBaseSetEvent(ev_tcpclient->kq_base, ev_tcpclient->socket_fd, COMM_EV_WRITE, COMM_ACTION_ADD_VOLATILE, CommEvTCPClientEventSSLRead, ev_tcpclient);
 			return 0;
 		}
@@ -1767,6 +1754,7 @@ static int CommEvTCPClientEventSSLRead(int fd, int can_read_sz, int thrd_id, voi
 		case SSL_ERROR_NONE:
 		case SSL_ERROR_ZERO_RETURN:
 		{
+			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - SSL_ERROR_NONE [%d] - SSL_ERROR_ZERO_RETURN [%d]\n", ev_tcpclient->socket_fd, SSL_ERROR_NONE, SSL_ERROR_ZERO_RETURN);
 			EvKQBaseSetEvent(ev_base, ev_tcpclient->socket_fd, COMM_EV_READ, COMM_ACTION_ADD_VOLATILE, CommEvTCPClientEventSSLRead, ev_tcpclient);
 			return 0;
 		}
@@ -1774,6 +1762,7 @@ static int CommEvTCPClientEventSSLRead(int fd, int can_read_sz, int thrd_id, voi
 		case SSL_ERROR_SYSCALL:
 		default:
 		{
+			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - SSL_ERROR_SYSCALL [%d] - DEFAULT\n", ev_tcpclient->socket_fd, SSL_ERROR_SYSCALL);
 			/* Mark flags as fatal error */
 			ev_tcpclient->flags.ssl_fatal_error = 1;
 
@@ -1983,7 +1972,9 @@ static int CommEvTCPClientReconnectTimer(int timer_id, int unused, int thrd_id, 
 {
 	CommEvTCPClient *ev_tcpclient = cb_data;
 
-	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Reconnect timer at ID [%d]\n", ev_tcpclient->socket_fd, timer_id);
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Reconnect TID [%d] - CLOSE - TOUT - FAIL [%d / %d / %d]\n",
+			ev_tcpclient->socket_fd, timer_id, ev_tcpclient->timers.reconnect_after_close_id,
+			ev_tcpclient->timers.reconnect_after_timeout_id, ev_tcpclient->timers.reconnect_on_fail_id);
 
 	/* Disable timer ID on CLIENT */
 	if (timer_id == ev_tcpclient->timers.reconnect_after_close_id)
@@ -2007,15 +1998,12 @@ static int CommEvTCPClientAsyncConnect(CommEvTCPClient *ev_tcpclient)
 	struct sockaddr* dst_addr 	= (struct sockaddr*)&ev_tcpclient->dst_addr;
 
 	/* Connect new_socket */
-//	if (ev_tcpclient->cfg.flags.unix_socket)
 	if (dst_addr->sa_family == AF_INET6)
 		op_status 				= connect(ev_tcpclient->socket_fd, dst_addr, sizeof(struct sockaddr_in6));
 	else if (dst_addr->sa_family == AF_UNIX)
 		op_status 				= connect(ev_tcpclient->socket_fd, dst_addr, sizeof(struct sockaddr_un));
 	else
 		op_status 				= connect(ev_tcpclient->socket_fd, dst_addr, sizeof(struct sockaddr_in));
-
-//	op_status 					= connect(ev_tcpclient->socket_fd, dst_addr, ev_tcpclient->dst_addr.ss_len);
 
 	/* Success connecting */
 	if (0 == op_status)
@@ -2035,14 +2023,14 @@ static int CommEvTCPClientAsyncConnect(CommEvTCPClient *ev_tcpclient)
 
 	default:
 
-		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - connect SYSCALL returned [%d] - ERRNO [%d] - FAMILY [%d]\n",
-				ev_tcpclient->socket_fd, op_status, errno, dst_addr->sa_family);
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_YELLOW, "FD [%d] - Connect SYSCALL fail [%d] - ERRNO [%d] - FAMILY [%d] - RoF [%d]\n",
+				ev_tcpclient->socket_fd, op_status, errno, dst_addr->sa_family, ev_tcpclient->flags.reconnect_on_fail);
 
 		/* Failed connecting */
 		ev_tcpclient->socket_state = COMM_CLIENT_STATE_CONNECT_FAILED_CONNECT_SYSCALL;
 
 		/* Dispatch the internal event */
-		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Dispatch CONNECT\n", ev_tcpclient->socket_fd);
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Dispatch CONNECT - [%s]\n", ev_tcpclient->socket_fd, ev_tcpclient->cfg.hostname);
 		CommEvTCPClientEventDispatchInternal(ev_tcpclient, 0, -1, COMM_CLIENT_EVENT_CONNECT);
 
 		/* Client has been destroyed, bail out */
@@ -2080,8 +2068,8 @@ static int CommEvTCPClientAsyncConnect(CommEvTCPClient *ev_tcpclient)
 					((ev_tcpclient->retry_times.reconnect_on_fail_ms > 0) ? ev_tcpclient->retry_times.reconnect_on_fail_ms : COMM_TCP_CLIENT_RECONNECT_FAIL_DEFAULT_MS),
 					CommEvTCPClientReconnectTimer, ev_tcpclient);
 
-			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Schedule RECONNECT_FAIL at TIMER_ID [%d]\n",
-					ev_tcpclient->socket_fd, ev_tcpclient->timers.reconnect_on_fail_id);
+			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Schedule RECONNECT_FAIL at TIMER_ID [%d] with %d ms\n",
+					ev_tcpclient->socket_fd, ev_tcpclient->timers.reconnect_on_fail_id, ev_tcpclient->retry_times.reconnect_on_fail_ms);
 		}
 
 		return 0;
@@ -2110,7 +2098,7 @@ static int CommEvTCPClientTimerConnectTimeout(int fd, int timeout_type, int thrd
 	CommEvTCPClient *ev_tcpclient	= cb_data;
 	EvBaseKQFileDesc *kq_fd			= EvKQBaseFDGrabFromArena(ev_tcpclient->kq_base, ev_tcpclient->socket_fd);
 
-	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - Connection TIMEDOUT\n", ev_tcpclient->socket_fd);
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - Connection TIMEDOUT\n", ev_tcpclient->socket_fd);
 
 	/* Set client state */
 	ev_tcpclient->socket_state = COMM_CLIENT_STATE_CONNECT_FAILED_TIMEOUT;
@@ -2120,7 +2108,7 @@ static int CommEvTCPClientTimerConnectTimeout(int fd, int timeout_type, int thrd
 	EvKQBaseTimeoutClearAll(ev_tcpclient->kq_base, ev_tcpclient->socket_fd);
 
 	/* Dispatch internal event */
-	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Dispatch CONNECT\n", ev_tcpclient->socket_fd);
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_CYAN, "FD [%d] - Dispatch CONNECT\n", ev_tcpclient->socket_fd);
 	CommEvTCPClientEventDispatchInternal(ev_tcpclient, timeout_type, thrd_id, COMM_CLIENT_EVENT_CONNECT);
 
 	/* Already destroyed, bail out */
@@ -2171,7 +2159,7 @@ static void CommEvTCPClientInternalDisconnect(CommEvTCPClient *ev_tcpclient)
 				((ev_tcpclient->retry_times.reconnect_after_timeout_ms > 0) ? ev_tcpclient->retry_times.reconnect_after_timeout_ms : COMM_TCP_CLIENT_RECONNECT_TIMEOUT_DEFAULT_MS),
 				CommEvTCPClientReconnectTimer, ev_tcpclient);
 
-		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_YELLOW, "FD [%d] - Timed out! Auto reconnect in [%d] ms at timer_id [%d]\n",
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_YELLOW, "FD [%d] - Timed out! Auto reconnect in [%d] ms at timer_id [%d]\n",
 				ev_tcpclient->socket_fd, ev_tcpclient->retry_times.reconnect_after_timeout_ms, ev_tcpclient->timers.reconnect_after_timeout_id);
 	}
 	/* If client want to be reconnected automatically after an EOF, honor it */
@@ -2271,7 +2259,8 @@ static void CommEvTCPClientDNSResolverCB(void *ev_dns_ptr, void *req_cb_data, vo
 	{
 		for (i = 0; i < a_reply->ip_count; i++)
 		{
-//			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Index [%d] - IP_ADDR [%s] - TTL [%d]\n", i, inet_ntoa(a_reply->ip_arr[i].addr), a_reply->ip_arr[i].ttl);
+			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Index [%d / %d] - IP_ADDR [%s] - TTL [%d]\n", i, a_reply->ip_count,
+					inet_ntoa(a_reply->ip_arr[i].addr), a_reply->ip_arr[i].ttl);
 
 			/* First iteration, initialize values */
 			if (0 == i)
@@ -2298,14 +2287,14 @@ static void CommEvTCPClientDNSResolverCB(void *ev_dns_ptr, void *req_cb_data, vo
 	}
 
 	/* Resolve failed, notify upper layers */
-	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FAILED [%d]\n", a_reply->ip_count);
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_GREEN, "FAILED [%d]\n", a_reply->ip_count);
 
 	/* Set flags */
 	ev_tcpclient->socket_state	= COMM_CLIENT_STATE_CONNECT_FAILED_DNS;
 	ev_tcpclient->dns.expire_ts = -1;
 
 	/* Dispatch internal event */
-	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Dispatch CONNECT\n", ev_tcpclient->socket_fd);
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_CYAN, "FD [%d] - Dispatch CONNECT\n", ev_tcpclient->socket_fd);
 	CommEvTCPClientEventDispatchInternal(ev_tcpclient, 0, -1, COMM_CLIENT_EVENT_CONNECT);
 
 	/* Already destroyed, bail out */
@@ -2328,7 +2317,7 @@ static void CommEvTCPClientDNSResolverCB(void *ev_dns_ptr, void *req_cb_data, vo
 		if ( ev_tcpclient->socket_fd >= 0)
 		{
 			/* Reset this client SOCKET_FD */
-			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Will reset SOCKET, to recycle\n", ev_tcpclient->socket_fd);
+			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_CYAN, "FD [%d] - Will reset SOCKET, to recycle\n", ev_tcpclient->socket_fd);
 			CommEvTCPClientResetFD(ev_tcpclient);
 		}
 
@@ -2340,7 +2329,7 @@ static void CommEvTCPClientDNSResolverCB(void *ev_dns_ptr, void *req_cb_data, vo
 				((ev_tcpclient->retry_times.reconnect_on_fail_ms > 0) ? ev_tcpclient->retry_times.reconnect_on_fail_ms : COMM_TCP_CLIENT_RECONNECT_FAIL_DEFAULT_MS),
 				CommEvTCPClientReconnectTimer, ev_tcpclient);
 
-		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - Schedule RECONNECT_FAIL at TIMER_ID [%d]\n",
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_CYAN, "FD [%d] - Schedule RECONNECT_FAIL at TIMER_ID [%d]\n",
 				ev_tcpclient->socket_fd, ev_tcpclient->timers.reconnect_on_fail_id);
 
 	}
@@ -2621,6 +2610,119 @@ static int CommEvTCPClientTimersCancelAll(CommEvTCPClient *ev_tcpclient)
 	ev_tcpclient->timers.reconnect_after_timeout_id	= -1;
 	ev_tcpclient->timers.reconnect_on_fail_id		= -1;
 	ev_tcpclient->timers.calculate_datarate_id		= -1;
+
+	return 1;
+}
+/**************************************************************************************************************************/
+static int CommEvTCPClientSSLDataReset(CommEvTCPClient *ev_tcpclient)
+{
+	int op_status = 0;
+
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - PROTO [%d] - Resetting SSL_CONTEXT\n",
+			ev_tcpclient->socket_fd, ev_tcpclient->cli_proto);
+
+	/* Sanity check */
+	if (COMM_CLIENTPROTO_SSL != ev_tcpclient->cli_proto)
+		return 0;
+
+	/* Clean up context */
+	op_status = CommEvTCPClientSSLDataClean(ev_tcpclient);
+
+	/* Failed cleaning context */
+	if (!op_status)
+	{
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - PROTO [%d] - Failed resetting SSL_CONTEXT\n",
+				ev_tcpclient->socket_fd, ev_tcpclient->cli_proto);
+		return 0;
+	}
+
+	CommEvTCPClientSSLDataInit(ev_tcpclient, NULL, (char*)&ev_tcpclient->cfg.sni_hostname);
+	return op_status;
+}
+/**************************************************************************************************************************/
+static int CommEvTCPClientSSLDataInit(CommEvTCPClient *ev_tcpclient, CommEvTCPClientConf *ev_tcpclient_conf, char *sni_str)
+{
+	/* TODO: User MUST can set client method */
+	if (!ev_tcpclient->ssldata.ssl_context)
+		ev_tcpclient->ssldata.ssl_context	= SSL_CTX_new(SSLv23_client_method());
+
+	/* Failed creating SSL context */
+	if (!ev_tcpclient->ssldata.ssl_context)
+	{
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - Failed creating SSL_CONTEXT\n", ev_tcpclient->socket_fd);
+		return 0;
+	}
+
+	/* NULL CYPHER asked */
+	if (ev_tcpclient->flags.ssl_null_cypher)
+	{
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_GREEN, "FD [%d] - Using NULL CYPHER SSL\n", ev_tcpclient->socket_fd);
+
+		if (!SSL_CTX_set_cipher_list(ev_tcpclient->ssldata.ssl_context, "aNULL"))
+		{
+			KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - Failed setting NULL CIPHER\n", ev_tcpclient->socket_fd);
+			return 0;
+		}
+	}
+
+	if (!ev_tcpclient->ssldata.ssl_handle)
+		ev_tcpclient->ssldata.ssl_handle	= SSL_new(ev_tcpclient->ssldata.ssl_context);
+
+	/* Failed creating SSL HANDLE */
+	if (!ev_tcpclient->ssldata.ssl_handle)
+	{
+		KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - Failed creating SSL_HANDLE\n", ev_tcpclient->socket_fd);
+		return 0;
+	}
+
+	/* Load TLS/SNI extension */
+	if (ev_tcpclient_conf && ev_tcpclient_conf->sni_hostname_str)
+	{
+		/* Save a copy of HOSTNAME for TLS Server Name Indication */
+		strncpy((char*)&ev_tcpclient->cfg.sni_hostname, ev_tcpclient_conf->sni_hostname_str, sizeof(ev_tcpclient->cfg.sni_hostname));
+		SSL_set_tlsext_host_name(ev_tcpclient->ssldata.ssl_handle, ev_tcpclient_conf->sni_hostname_str);
+	}
+	/* Initialize by given pointer for reset */
+	else if (sni_str)
+	{
+		/* Save a copy of HOSTNAME for TLS Server Name Indication */
+		SSL_set_tlsext_host_name(ev_tcpclient->ssldata.ssl_handle, sni_str);
+	}
+
+	/* Attach to SOCKET_FD */
+	SSL_set_fd(ev_tcpclient->ssldata.ssl_handle, ev_tcpclient->socket_fd);
+	ev_tcpclient->ssldata.ssl_negotiatie_trycount	= 0;
+	ev_tcpclient->flags.ssl_enabled					= 1;
+
+	return 1;
+}
+/**************************************************************************************************************************/
+static int CommEvTCPClientSSLDataClean(CommEvTCPClient *ev_tcpclient)
+{
+	KQBASE_LOG_PRINTF(ev_tcpclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - PROTO [%d] - Cleaning SSL_CONTEXT\n",
+			ev_tcpclient->socket_fd, ev_tcpclient->cli_proto);
+
+	/* Sanity check */
+	if (COMM_CLIENTPROTO_SSL != ev_tcpclient->cli_proto)
+		return 0;
+
+	if (ev_tcpclient->ssldata.ssl_handle)
+	{
+		SSL_shutdown (ev_tcpclient->ssldata.ssl_handle);
+		SSL_free (ev_tcpclient->ssldata.ssl_handle);
+		ev_tcpclient->ssldata.ssl_handle = NULL;
+	}
+	if (ev_tcpclient->ssldata.ssl_context)
+	{
+		SSL_CTX_free (ev_tcpclient->ssldata.ssl_context);
+		ev_tcpclient->ssldata.ssl_context = NULL;
+	}
+
+	if (ev_tcpclient->ssldata.x509_cert)
+	{
+		X509_free(ev_tcpclient->ssldata.x509_cert);
+		ev_tcpclient->ssldata.x509_cert = NULL;
+	}
 
 	return 1;
 }

@@ -201,7 +201,7 @@ int CommEvUNIXClientConnect(CommEvUNIXClient *ev_unixclient, CommEvUNIXClientCon
 	ev_unixclient->retry_times.reconnect_on_fail_ms			= ev_unixclient_conf->retry_times.reconnect_on_fail_ms;
 
 	/* Copy server path to connect */
-	strncpy (ev_unixclient->server_path, ev_unixclient_conf->server_path, sizeof(ev_unixclient->server_path));
+	strncpy ((char*)&ev_unixclient->server_path, ev_unixclient_conf->server_path, sizeof(ev_unixclient->server_path));
 
 	KQBASE_LOG_PRINTF(ev_unixclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - Begin ASYNC to UNIX path [%s]\n",
 			ev_unixclient->socket_fd, ev_unixclient->server_path);

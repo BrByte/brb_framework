@@ -60,6 +60,7 @@ EvICMPPeriodicPinger *CommEvICMPPeriodicPingerNew(EvICMPBase *icmp_base, EvICMPP
 	icmp_pinger->resolv_base					= pinger_conf->resolv_base;
 
 	/* Copy interval and PAYLOAD data */
+	icmp_pinger->cfg.stop_count					= ((pinger_conf->stop_count > 0) ? pinger_conf->stop_count : 0);
 	icmp_pinger->cfg.reset_count				= ((pinger_conf->reset_count > 0) ? pinger_conf->reset_count : 8092);
 	icmp_pinger->cfg.interval					= ((pinger_conf->interval_ms > 0) ? pinger_conf->interval_ms : 1000);
 	icmp_pinger->cfg.timeout					= ((pinger_conf->timeout_ms > 0) ? pinger_conf->timeout_ms : 1000);
@@ -105,9 +106,6 @@ EvICMPPeriodicPinger *CommEvICMPPeriodicPingerNew(EvICMPBase *icmp_base, EvICMPP
 
 			return NULL;
 		}
-
-		/* Convert back IP Address */
-		BrbNetworkSockNtop((char *)&icmp_pinger->cfg.ip_addr_str, sizeof(icmp_pinger->cfg.ip_addr_str), (struct sockaddr *)&icmp_pinger->cfg.sockaddr, 0);
 	}
 
 	/* Check now if user sent us a HOSTNAME and we have no resolver base defined - Will set flags.dns_need_lookup */
@@ -144,8 +142,11 @@ EvICMPPeriodicPinger *CommEvICMPPeriodicPingerNew(EvICMPBase *icmp_base, EvICMPP
 	/* By sequence order, HostName no need to resolve, plain old IP address, or IP address in string */
 	else
 	{
+		/* Convert back IP Address */
+		BrbNetworkSockNtop((char *)&icmp_pinger->cfg.ip_addr_str, sizeof(icmp_pinger->cfg.ip_addr_str), (struct sockaddr *)&icmp_pinger->cfg.sockaddr, 0);
+
 		/* Schedule timer to begin dispatching ICMP ECHO requests */
-		icmp_pinger->timer_id 			= EvKQBaseTimerAdd(icmp_pinger->icmp_base->ev_base, COMM_ACTION_ADD_PERSIST, icmp_pinger->cfg.interval, EvICMPPeriodicPingerTimer, icmp_pinger);
+		icmp_pinger->timer_id 			= EvKQBaseTimerAdd(icmp_pinger->icmp_base->ev_base, COMM_ACTION_ADD_VOLATILE, icmp_pinger->cfg.interval, EvICMPPeriodicPingerTimer, icmp_pinger);
 	}
 
 	/* Send ICMP request */
@@ -200,6 +201,36 @@ void CommEvICMPPeriodicPingerDestroy(EvICMPPeriodicPinger *icmp_pinger)
 	/* Free willy */
 	free(icmp_pinger);
 	return;
+}
+/**************************************************************************************************************************/
+int CommEvICMPPeriodicPingerRun(EvICMPPeriodicPinger *icmp_pinger, int only_sched)
+{
+	/* Sanity check */
+	if (!icmp_pinger)
+		return -1;
+
+	/* No request sent, no timer and not sched */
+	if ((icmp_pinger->timer_id < 0) && !only_sched)
+		EvICMPPeriodicPingerSendRequest(icmp_pinger);
+
+	/* Schedule timer to begin dispatching ICMP ECHO requests */
+	if (icmp_pinger->timer_id < 0)
+		icmp_pinger->timer_id 		= EvKQBaseTimerAdd(icmp_pinger->icmp_base->ev_base, COMM_ACTION_ADD_VOLATILE, icmp_pinger->cfg.interval, EvICMPPeriodicPingerTimer, icmp_pinger);
+
+	return 0;
+}
+/**************************************************************************************************************************/
+int CommEvICMPPeriodicPingerStop(EvICMPPeriodicPinger *icmp_pinger)
+{
+	/* Sanity check */
+	if (!icmp_pinger)
+		return -1;
+
+	/* Delete control timer */
+	if (icmp_pinger->timer_id > -1)
+		EvKQBaseTimerCtl(icmp_pinger->icmp_base->ev_base, icmp_pinger->timer_id, COMM_ACTION_DELETE);
+
+	return 0;
 }
 /**************************************************************************************************************************/
 void CommEvICMPPeriodicPingerStatsReset(EvICMPPeriodicPinger *icmp_pinger)
@@ -328,6 +359,13 @@ static int EvICMPPeriodicPingerSendRequest(EvICMPPeriodicPinger *icmp_pinger)
 	struct timeval timeval_now;
 	EvICMPBase *icmp_base = icmp_pinger->icmp_base;
 
+	/* Waiting for reply request */
+	if (icmp_pinger->last.icmp_slot_id > -1)
+	{
+		icmp_pinger->flags.waiting_reply = 1;
+		return -1;
+	}
+
 	/* If there is a reset count, reset statistics */
 	if (icmp_pinger->cfg.reset_count > 0 && (icmp_pinger->stats.request_sent >= icmp_pinger->cfg.reset_count))
 		CommEvICMPPeriodicPingerStatsReset(icmp_pinger);
@@ -385,7 +423,8 @@ static void EvICMPPeriodicPingerCB(void *icmp_base_ptr, void *req_cb_data_ptr, v
 	EvICMPPeriodicPinger *icmp_pinger	= req_cb_data_ptr;
 
 	/* Reset last request ID */
-	icmp_pinger->last.icmp_slot_id = -1;
+	icmp_pinger->last.icmp_slot_id 		= -1;
+	icmp_pinger->flags.waiting_reply 	= 0;
 
 	/* Initialize local time and target_addr info */
 	gettimeofday((struct timeval*)&timeval_now, NULL);
@@ -393,16 +432,16 @@ static void EvICMPPeriodicPingerCB(void *icmp_base_ptr, void *req_cb_data_ptr, v
 	/* No reply packet, this is a timeout */
 	if (!icmp_reply->icmp_packet)
 	{
-		KQBASE_LOG_PRINTF(icmp_pinger->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "ICMP Timed out - Seq ID [%d]\n", icmp_reply->icmp_seq);
+		KQBASE_LOG_PRINTF(icmp_pinger->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "ICMP Timed out - Seq ID [%d]\n", icmp_reply->icmp_seq);
 		goto timed_out;
 	}
-	/* Unexpected sequence ID */
-	else if (icmp_reply->icmp_packet->icmp_seq != (icmp_pinger->last.seq_req_id - 1))
-	{
-//		KQBASE_LOG_PRINTF(icmp_pinger->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "ICMP Unexpected ID [%u] - Seq ID [%u] - TYPE [%d]\n",
-//				icmp_reply->icmp_packet->icmp_seq, icmp_pinger->last.seq_req_id, icmp_reply->icmp_type);
-		goto unexpected_packet;
-	}
+//	/* Unexpected sequence ID */
+//	else if (icmp_reply->icmp_packet->icmp_seq != (icmp_pinger->last.seq_req_id - 1))
+//	{
+//		KQBASE_LOG_PRINTF(icmp_pinger->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "ICMP Unexpected ID [%u] - Seq ID [%u] - TYPE [%d] - ID [%d] - CODE [%d]\n",
+//				icmp_reply->icmp_packet->icmp_seq, icmp_pinger->last.seq_req_id, icmp_reply->icmp_type, icmp_reply->icmp_id, icmp_reply->icmp_code);
+//		goto unexpected_packet;
+//	}
 	/* Unexpected IpAddress */
 	else if (!COMM_SOCK_ADDR_EQ_ADDR(icmp_reply->sockaddr, &icmp_pinger->cfg.sockaddr))
 	{
@@ -423,7 +462,7 @@ static void EvICMPPeriodicPingerCB(void *icmp_base_ptr, void *req_cb_data_ptr, v
 //		KQBASE_LOG_PRINTF(icmp_pinger->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "OP [%d] - ICMP Unexpected IP [%s] - LEN [%d] - FAMILY [%d] - SIN [%ul]\n",
 //				op_status, (char *)&bud_ptr, sockaddr->ss_len, sockaddr->ss_family, ((struct sockaddr_in6 *)sockaddr)->sin6_addr.s6_addr);
 
-		KQBASE_LOG_PRINTF(icmp_pinger->log_base, LOGTYPE_DEBUG, LOGCOLOR_RED, "ICMP Unexpected SRC_IP [%s]\n", icmp_pinger->cfg.ip_addr_str);
+		KQBASE_LOG_PRINTF(icmp_pinger->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "ICMP Unexpected SRC_IP [%s]\n", icmp_pinger->cfg.ip_addr_str);
 
 		goto unexpected_packet;
 	}
@@ -443,6 +482,10 @@ static void EvICMPPeriodicPingerCB(void *icmp_base_ptr, void *req_cb_data_ptr, v
 
 		goto unexpected_packet;
 	}
+	else
+	{
+		KQBASE_LOG_PRINTF(icmp_pinger->log_base, LOGTYPE_INFO, LOGCOLOR_PURPLE, "ICMP - Seq ID [%d]\n", icmp_pinger->last.seq_req_id);
+	}
 
 	/* Save last reply TIMEVAL */
 	memcpy(&icmp_pinger->stats.lastreply_tv, &timeval_now, sizeof(struct timeval));
@@ -451,7 +494,7 @@ static void EvICMPPeriodicPingerCB(void *icmp_base_ptr, void *req_cb_data_ptr, v
 	icmp_pinger->stats.reply_recv++;
 	icmp_pinger->stats.latency_ms		= CommEvICMPtvSubMsec((struct timeval*)&icmp_reply->icmp_packet->payload, &timeval_now);
 	icmp_pinger->stats.hop_count		= icmp_reply->icmp_hopcount;
-	icmp_pinger->stats.packet_loss_pct	= (100.00 - ((icmp_pinger->stats.reply_recv * 100.00) / (icmp_pinger->stats.request_sent ? icmp_pinger->stats.request_sent : 1.00)));
+	icmp_pinger->stats.packet_loss_pct	= 100.0 - (100.0 / (icmp_pinger->stats.request_sent > 0 ? icmp_pinger->stats.request_sent : 1.00)) * icmp_pinger->stats.reply_recv;
 	icmp_pinger->last.seq_reply_id		= icmp_reply->icmp_packet->icmp_seq;
 
 	/* Dispatch internal REPLY event */
@@ -469,9 +512,8 @@ static void EvICMPPeriodicPingerCB(void *icmp_base_ptr, void *req_cb_data_ptr, v
 	unexpected_packet:
 
 	/* Calculate packet loss and reset latency */
-	icmp_pinger->stats.packet_loss_pct	= (100.00 - ((icmp_pinger->stats.reply_recv * 100.00) /  (icmp_pinger->stats.request_sent ? icmp_pinger->stats.request_sent : 1.00)));
+	icmp_pinger->stats.packet_loss_pct	= 100.0 - (100.0 / (icmp_pinger->stats.request_sent > 0 ? icmp_pinger->stats.request_sent : 1.00)) * icmp_pinger->stats.reply_recv;
 	icmp_pinger->stats.latency_ms		= -1;
-
 	return;
 }
 /**************************************************************************************************************************/
@@ -482,8 +524,23 @@ static int EvICMPPeriodicPingerTimer(int timer_id, int unused, int thrd_id, void
 
 	KQBASE_LOG_PRINTF(icmp_pinger->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Periodic TIMER_ID [%d] event\n", timer_id);
 
+	icmp_pinger->timer_id 				= -1;
+
+	/* If there is a stop count, stop timer */
+	if (icmp_pinger->cfg.stop_count > 0 && (icmp_pinger->stats.request_sent >= icmp_pinger->cfg.stop_count))
+	{
+		/* Dispatch internal REPLY event */
+		EvICMPPeriodicPingerEventDispatchInternal(icmp_pinger, NULL, ICMP_EVENT_STOP);
+
+		return 0;
+	}
+
 	/* Send ICMP request */
 	EvICMPPeriodicPingerSendRequest(icmp_pinger);
+
+	/* Schedule timer to begin dispatching ICMP ECHO requests */
+	if (icmp_pinger->timer_id < 0)
+		icmp_pinger->timer_id 			= EvKQBaseTimerAdd(icmp_pinger->icmp_base->ev_base, COMM_ACTION_ADD_VOLATILE, icmp_pinger->cfg.interval, EvICMPPeriodicPingerTimer, icmp_pinger);
 
 	return 0;
 }
@@ -571,7 +628,7 @@ static void EvICMPPeriodicPingerResolverCB(void *ev_dns_ptr, void *cb_data, void
 		/* Schedule timer to begin dispatching ICMP ECHO requests */
 		if (icmp_pinger->timer_id < 0)
 		{
-			icmp_pinger->timer_id 	= EvKQBaseTimerAdd(icmp_pinger->icmp_base->ev_base, COMM_ACTION_ADD_PERSIST, icmp_pinger->cfg.interval, EvICMPPeriodicPingerTimer, icmp_pinger);
+			icmp_pinger->timer_id 	= EvKQBaseTimerAdd(icmp_pinger->icmp_base->ev_base, COMM_ACTION_ADD_VOLATILE, icmp_pinger->cfg.interval, EvICMPPeriodicPingerTimer, icmp_pinger);
 		}
 
 	}

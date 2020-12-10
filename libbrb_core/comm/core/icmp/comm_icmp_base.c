@@ -78,8 +78,9 @@ EvICMPBase *CommEvICMPBaseNew(EvKQBase *kq_base)
 	EvKQBaseFDDescriptionSetByFD(icmp_base->ev_base, icmp_base->socket_fdv6 , "BRB_EV_COMM - ICMP BASE V6");
 
 	/* Initialize timeout timer */
-	icmp_base->timer_id			= -1;
-	icmp_base->min_seen_timeout = ICMP_BASE_TIMEOUT_TIMER;
+	icmp_base->identy_id 			= getpid() & 0xFFFF;
+	icmp_base->timer_id				= -1;
+	icmp_base->min_seen_timeout 	= ICMP_BASE_TIMEOUT_TIMER;
 
 	return icmp_base;
 }
@@ -260,8 +261,8 @@ int CommEvICMPRequestSend(EvICMPBase *icmp_base, struct sockaddr_storage *sockad
 	icmp_queryinfo->timeout_ms					= timeout_ms;
 	icmp_queryinfo->icmp_packet.icmp_type		= type;
 	icmp_queryinfo->icmp_packet.icmp_code 		= code;
-	icmp_queryinfo->icmp_packet.icmp_id			= slot_id;
-	icmp_queryinfo->icmp_packet.icmp_seq		= seq;
+	icmp_queryinfo->icmp_packet.icmp_id			= icmp_base->identy_id;
+	icmp_queryinfo->icmp_packet.icmp_seq		= slot_id;
 	icmp_queryinfo->icmp_packet.icmp_cksum		= 0;
 //	struct icmp_hdr icmp_hdr;
 //	struct icmp6_hdr icmp_hdr6;
@@ -502,6 +503,10 @@ static int CommEvICMPBaseEventRead(int fd, int to_read_sz, int thrd_id, void *cb
 		icmp_payload_sz 			= ip_header->ip6_plen >> 8;
 		icmp_hopcount				= CommEvICMPGuessHopsFromTTL(ip_header->ip6_hops);
 
+		/* Don't belong to us */
+		if (icmp_header->icmp_id != icmp_base->identy_id)
+			return data_read;
+
 		/* This actions may happen without echo request, threat as well to manage the route or other things */
 		switch (icmp_header->icmp_type)
 		{
@@ -581,6 +586,12 @@ static int CommEvICMPBaseEventRead(int fd, int to_read_sz, int thrd_id, void *cb
 			return data_read;
 		}
 		}
+
+//		char bud_ptr[128];
+//		int op_status;
+//		op_status 		= BrbNetworkSockNtop((char *)&bud_ptr, sizeof(bud_ptr), (const struct sockaddr *)&from_sockaddr, 0);
+//		KQBASE_LOG_PRINTF(icmp_base->log_base, LOGTYPE_DEBUG, LOGCOLOR_YELLOW, "FD [%d] - TYPE [%d] - ID [%d] SEQ [%d] - IP [%s]\n",
+//				fd, icmp_header->icmp_type, icmp_header->icmp_id, icmp_header->icmp_seq, (char *)&bud_ptr);
 	}
 	else
 	{
@@ -596,6 +607,10 @@ static int CommEvICMPBaseEventRead(int fd, int to_read_sz, int thrd_id, void *cb
 		icmp_header					= (CommEvICMPHeader*)&packet_buf[ip_header_sz];
 		icmp_header_sz				= sizeof(CommEvICMPHeader) - sizeof(icmp_header->payload) - 4;
 		icmp_payload_sz 			= ip_header->total_len - (ip_header_sz + icmp_header_sz);
+
+		/* Don't belong to us */
+		if (icmp_header->icmp_id != icmp_base->identy_id)
+			return data_read;
 
 		/* This actions may happen without echo request, threat as well to manage the route or other things */
 		switch (icmp_header->icmp_type)
@@ -617,19 +632,25 @@ static int CommEvICMPBaseEventRead(int fd, int to_read_sz, int thrd_id, void *cb
 			return data_read;
 		}
 		}
+
+//		char bud_ptr[128];
+//		int op_status;
+//		op_status 		= BrbNetworkSockNtop((char *)&bud_ptr, sizeof(bud_ptr), (const struct sockaddr *)&from_sockaddr, 0);
+//		KQBASE_LOG_PRINTF(icmp_base->log_base, LOGTYPE_DEBUG, LOGCOLOR_YELLOW, "FD [%d] - TYPE [%d] - ID [%d] SEQ [%d] - IP [%s]\n",
+//				fd, icmp_header->icmp_type, icmp_header->icmp_id, icmp_header->icmp_seq, (char *)&bud_ptr);
 	}
 
 	/* Safety cap */
-	if (icmp_header->icmp_id >= ICMP_QUERY_MAX_SEQID)
+	if (icmp_header->icmp_seq >= ICMP_QUERY_MAX_SEQID)
 		return data_read;
 
 	/* Grab query info from query_info array */
-	icmp_queryinfo 					= MemArenaGrabByID(icmp_pending->arena, icmp_header->icmp_id);
+	icmp_queryinfo 					= MemArenaGrabByID(icmp_pending->arena, icmp_header->icmp_seq);
 
 	/* Unexpected reply, bail out */
 	if (!icmp_queryinfo->flags.in_use)
 	{
-		MemArenaReleaseByID(icmp_pending->arena, icmp_header->icmp_id);
+		MemArenaReleaseByID(icmp_pending->arena, icmp_header->icmp_seq);
 		return data_read;
 	}
 
@@ -768,7 +789,7 @@ static int CommEvICMPBaseEventWrite(int fd, int can_write_sz, int thrd_id, void 
 		total_wrote_bytes += wrote_bytes;
 
 		/* Move it to pending reply list and increment sent request count */
-		DLinkedListDelete(&icmp_pending->req_list, &icmp_queryinfo->node);
+//		DLinkedListDelete(&icmp_pending->req_list, &icmp_queryinfo->node);
 		DLinkedListAddTail(&icmp_pending->reply_list, &icmp_queryinfo->node, icmp_queryinfo);
 
 		/* Set as waiting for reply - On reply_list */
@@ -823,6 +844,8 @@ static int CommEvICMPBaseTimeoutCheckPending(EvICMPBase *icmp_base, EvICMPPendin
 	int delta_tx;
 	int i;
 
+	KQBASE_LOG_PRINTF(icmp_base->log_base, LOGTYPE_INFO, LOGCOLOR_ORANGE, "CHECK TIMEOUT - REQ [%d] - REPLY [%d]\n", icmp_pending->req_list.size, icmp_pending->reply_list.size);
+
 	/* Nothing else to check, STOP TIMER */
 	if (DLINKED_LIST_ISEMPTY(icmp_pending->req_list) && DLINKED_LIST_ISEMPTY(icmp_pending->reply_list))
 		return 0;
@@ -839,6 +862,8 @@ static int CommEvICMPBaseTimeoutCheckPending(EvICMPBase *icmp_base, EvICMPPendin
 		/* Request has timed_out */
 		if (delta_tx > icmp_queryinfo->timeout_ms)
 		{
+			KQBASE_LOG_PRINTF(icmp_base->log_base, LOGTYPE_INFO, LOGCOLOR_ORANGE, "REQ [%d] - TIMEDOUT [%d]/[%d]\n", icmp_queryinfo->icmp_packet.icmp_id, delta_tx, icmp_queryinfo->timeout_ms);
+
 			/* Grab cb_handler and cb_data back */
 			cb_handler	= icmp_queryinfo->cb_handler;
 			req_cb_data	= icmp_queryinfo->cb_data;
@@ -875,6 +900,8 @@ static int CommEvICMPBaseTimeoutCheckPending(EvICMPBase *icmp_base, EvICMPPendin
 		/* Request has timed_out */
 		if (delta_tx > icmp_queryinfo->timeout_ms)
 		{
+			KQBASE_LOG_PRINTF(icmp_base->log_base, LOGTYPE_INFO, LOGCOLOR_ORANGE, "REP [%d] - TIMEDOUT [%d]/[%d]\n", icmp_queryinfo->icmp_packet.icmp_id, delta_tx, icmp_queryinfo->timeout_ms);
+
 			/* Grab cb_handler and cb_data back */
 			cb_handler	= icmp_queryinfo->cb_handler;
 			req_cb_data	= icmp_queryinfo->cb_data;

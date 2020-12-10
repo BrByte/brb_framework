@@ -407,9 +407,9 @@ int CommEvUNIXIORead(EvKQBase *ev_base, CommEvUNIXIOData *io_data, int socket_fd
 /**************************************************************************************************************************/
 int CommEvUNIXIOWriteRaw(EvKQBase *ev_base, CommEvUNIXWriteRequest *write_req, int socket_fd)
 {
-	struct cmsghdr *cmsg;
-	struct msghdr msghdr;
-	struct iovec iov[2];
+	struct cmsghdr *cmsg 	= NULL;
+	struct msghdr msghdr   	= {0};
+	struct iovec iov[2]  	= {0};
 	int wrote_bytes;
 
 	assert(write_req->flags.in_use);
@@ -429,7 +429,7 @@ int CommEvUNIXIOWriteRaw(EvKQBase *ev_base, CommEvUNIXWriteRequest *write_req, i
 	msghdr.msg_flags		= 0;
 
 	/* Write to socket */
-	wrote_bytes 			= sendmsg (socket_fd, &msghdr, 0);
+	wrote_bytes 			= sendmsg(socket_fd, &msghdr, 0);
 
 	return wrote_bytes;
 }

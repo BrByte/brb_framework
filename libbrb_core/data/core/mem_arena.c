@@ -46,6 +46,7 @@ MemArena *MemArenaNew(long arena_size, long slot_size, long slot_count, int type
 
 	/* Initialize data arena */
 	mem_arena->data							= calloc(arena_size + 1, sizeof(void*));
+	mem_arena->mutex						= (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
 
 	mem_arena->size[MEMARENA_SIZE_CAPACITY]	= arena_size;
 	mem_arena->size[MEMARENA_SIZE_INITIAL]	= arena_size;
@@ -53,6 +54,10 @@ MemArena *MemArenaNew(long arena_size, long slot_size, long slot_count, int type
 
 	mem_arena->slot[MEMARENA_SLOT_SIZE]		= slot_size;
 	mem_arena->slot[MEMARENA_SLOT_COUNT]	= slot_count;
+
+	/* Set flags we are running THREAD SAFE */
+	if (BRBDATA_THREAD_SAFE == type)
+		mem_arena->flags.thread_safe = 1;
 
 	return mem_arena;
 }
@@ -66,6 +71,10 @@ void MemArenaClean(MemArena *mem_arena)
 	/* Sanity check */
 	if (!mem_arena)
 		return;
+
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_LOCK(mem_arena->mutex, "MEM_ARENA");
 
 	area_cap	= ((mem_arena->slot[MEMARENA_SLOT_COUNT] + 1) * (mem_arena->slot[MEMARENA_SLOT_SIZE] + 1));
 
@@ -83,11 +92,16 @@ void MemArenaClean(MemArena *mem_arena)
 		continue;
 	}
 
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+
 	return;
 }
 /**************************************************************************************************************************/
 void MemArenaDestroy(MemArena *mem_arena)
 {
+	MemArenaSlotHeader *header;
 	long i;
 
 	/* Sanity check */
@@ -98,7 +112,11 @@ void MemArenaDestroy(MemArena *mem_arena)
 	for (i = 0; i < mem_arena->size[MEMARENA_SIZE_CAPACITY]; i++)
 	{
 		if (mem_arena->data[i])
+		{
+			header = (MemArenaSlotHeader *)mem_arena->data[i];
+			MemArenaSlotHeaderClean(header);
 			free(mem_arena->data[i]);
+		}
 
 		mem_arena->data[i] = NULL;
 		continue;
@@ -106,8 +124,69 @@ void MemArenaDestroy(MemArena *mem_arena)
 
 	/* Free arena control block */
 	free(mem_arena->data);
+
+	/* Running thread safe, destroy MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_DESTROY(mem_arena->mutex, "MEM_ARENA");
+
 	free(mem_arena);
+
 	return;
+}
+/**************************************************************************************************************************/
+void *MemArenaFindByID(MemArena *mem_arena, long id)
+{
+	MemArenaSlotHeader *header;
+	void *ret_ptr;
+	long arena_id;
+	long slot_offset;
+
+	/* Sanity check */
+	if (id < 0)
+		return NULL;
+
+	/* Sanity check */
+	if (!mem_arena)
+		return NULL;
+
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_LOCK(mem_arena->mutex, "MEM_ARENA");
+
+	/* Calculate arena_id and slot_offset */
+	arena_id		= (id / mem_arena->slot[MEMARENA_SLOT_COUNT]);
+	slot_offset		= (id % (mem_arena->slot[MEMARENA_SLOT_COUNT]));
+
+	/* Need to grow arena */
+	if (arena_id >= mem_arena->size[MEMARENA_SIZE_CAPACITY])
+		goto leave;
+
+	/* Check into arena if there is a slot */
+	if (!mem_arena->data[arena_id])
+		goto leave;
+
+	/* Dereference HEADER on the begin of ARENA AREA */
+	header = (MemArenaSlotHeader *)(mem_arena->data[arena_id]);
+
+	/* Not in use, bail out */
+	if (!DynBitMapBitTest(header->bitmap, slot_offset))
+		goto leave;
+
+	/* Calculate SLOT_PTR to be returned and leave */
+	ret_ptr = &mem_arena->data[arena_id][(slot_offset * mem_arena->slot[MEMARENA_SLOT_SIZE])];
+	ret_ptr += sizeof(MemArenaSlotHeader);
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+
+	return ret_ptr;
+
+	leave:
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+	return NULL;
 }
 /**************************************************************************************************************************/
 void *MemArenaGrabByID(MemArena *mem_arena, long id)
@@ -126,6 +205,10 @@ void *MemArenaGrabByID(MemArena *mem_arena, long id)
 	/* Sanity check */
 	if (!mem_arena)
 		return NULL;
+
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_LOCK(mem_arena->mutex, "MEM_ARENA");
 
 	/* Calculate arena_id and slot_offset */
 	arena_id		= (id / mem_arena->slot[MEMARENA_SLOT_COUNT]);
@@ -174,6 +257,10 @@ void *MemArenaGrabByID(MemArena *mem_arena, long id)
 	ret_ptr = &mem_arena->data[arena_id][(slot_offset * mem_arena->slot[MEMARENA_SLOT_SIZE])];
 	ret_ptr += sizeof(MemArenaSlotHeader);
 
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+
 	return ret_ptr;
 }
 /**************************************************************************************************************************/
@@ -190,6 +277,10 @@ void MemArenaReleaseByID(MemArena *mem_arena, long id)
 	/* Sanity check */
 	if (!mem_arena)
 		return;
+
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_LOCK(mem_arena->mutex, "MEM_ARENA");
 
 	/* Calculate arena_id and slot_offset */
 	arena_id		= (id / mem_arena->slot[MEMARENA_SLOT_COUNT]);
@@ -216,6 +307,10 @@ void MemArenaReleaseByID(MemArena *mem_arena, long id)
 		mem_arena->data[arena_id] = NULL;
 	}
 
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+
 	return;
 }
 /**************************************************************************************************************************/
@@ -232,6 +327,10 @@ void MemArenaLockByID(MemArena *mem_arena, long id)
 	if (!mem_arena)
 		return;
 
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_LOCK(mem_arena->mutex, "MEM_ARENA");
+
 	/* Calculate arena_id and slot_offset */
 	arena_id		= (id / mem_arena->slot[MEMARENA_SLOT_COUNT]);
 
@@ -243,6 +342,11 @@ void MemArenaLockByID(MemArena *mem_arena, long id)
 	assert(0xDE == header->canary00);
 	assert(0xAD == header->canary01);
 	header->busy_count++;
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+
 	return;
 }
 /**************************************************************************************************************************/
@@ -258,6 +362,10 @@ int MemArenaUnlockByID(MemArena *mem_arena, long id)
 	/* Sanity check */
 	if (!mem_arena)
 		return 0;
+
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_LOCK(mem_arena->mutex, "MEM_ARENA");
 
 	/* Calculate arena_id and slot_offset */
 	arena_id		= (id / mem_arena->slot[MEMARENA_SLOT_COUNT]);
@@ -278,48 +386,103 @@ int MemArenaUnlockByID(MemArena *mem_arena, long id)
 		free(mem_arena->data[arena_id]);
 		mem_arena->data[arena_id] = NULL;
 
+		/* Running THREAD_SAFE, UNLOCK MUTEX */
+		if (mem_arena->flags.thread_safe)
+			MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+
 		/* Return true to let caller know we destroyed this bucket */
 		return 1;
 	}
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
 
 	return 0;
 }
 /**************************************************************************************************************************/
 long MemArenaGetArenaCapacity(MemArena *mem_arena)
 {
+	long result;
+
 	/* Sanity check */
 	if (!mem_arena)
 		return 0;
 
-	return mem_arena->size[MEMARENA_SIZE_CAPACITY];
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_LOCK(mem_arena->mutex, "MEM_ARENA");
+
+	result = mem_arena->size[MEMARENA_SIZE_CAPACITY];
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+
+	return result;
 }
 /**************************************************************************************************************************/
 long MemArenaGetSlotSize(MemArena *mem_arena)
 {
+	long result;
+
 	/* Sanity check */
 	if (!mem_arena)
 		return 0;
 
-	return mem_arena->slot[MEMARENA_SLOT_SIZE];
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_LOCK(mem_arena->mutex, "MEM_ARENA");
+
+	result = mem_arena->size[MEMARENA_SLOT_SIZE];
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+
+	return result;
 }
 /**************************************************************************************************************************/
 long MemArenaGetSlotCount(MemArena *mem_arena)
 {
+	long result;
+
 	/* Sanity check */
 	if (!mem_arena)
 		return 0;
 
-	return mem_arena->slot[MEMARENA_SLOT_COUNT];
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_LOCK(mem_arena->mutex, "MEM_ARENA");
+
+	result = mem_arena->size[MEMARENA_SLOT_COUNT];
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+
+	return result;
 }
 /**************************************************************************************************************************/
 long MemArenaGetSlotActiveCount(MemArena *mem_arena)
 {
+	long result;
+
 	/* Sanity check */
 	if (!mem_arena)
 		return 0;
 
-	return mem_arena->slot[MEMARENA_SIZE_CURRENT];
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_LOCK(mem_arena->mutex, "MEM_ARENA");
 
+	result = mem_arena->size[MEMARENA_SIZE_CURRENT];
+
+	/* Running THREAD_SAFE, UNLOCK MUTEX */
+	if (mem_arena->flags.thread_safe)
+		MUTEX_UNLOCK(mem_arena->mutex, "MEM_ARENA");
+
+	return result;
 }
 /**************************************************************************************************************************/
 /**/

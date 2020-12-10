@@ -110,7 +110,7 @@ EvKQBase *EvKQBaseNew(EvKQBaseConf *kq_conf)
 
 	/* Load KQ_CONF into KQ_BASE */
 	kq_base->kq_conf.arena.fd_start				= ((kq_conf && kq_conf->arena.fd_start > 0) ? kq_conf->arena.fd_start : 512);
-	kq_base->kq_conf.arena.timer_start			= ((kq_conf && kq_conf->arena.timer_start > 0) ? kq_conf->arena.timer_start : 512);
+	kq_base->kq_conf.arena.timer_max			= ((kq_conf && kq_conf->arena.timer_max > 0) ? kq_conf->arena.timer_max : 65535);
 	kq_base->kq_conf.timeout.event_loop_ms		= ((kq_conf && kq_conf->timeout.event_loop_ms > 0) ? kq_conf->timeout.event_loop_ms : 50);
 	kq_base->kq_conf.error_count_max			= ((kq_conf && kq_conf->error_count_max > 0) ? kq_conf->error_count_max : 10);
 	kq_base->kq_conf.kq_thread.count_start		= ((kq_conf && kq_conf->kq_thread.count_start > 1) ? kq_conf->kq_thread.count_start : 2);
@@ -128,7 +128,7 @@ EvKQBase *EvKQBaseNew(EvKQBaseConf *kq_conf)
 	DLinkedListInit(&kq_base->reg_obj.list, BRBDATA_THREAD_UNSAFE);
 
 	/* Initialize TIMER and FD arenas */
-	EvKQBaseTimerArenaNew(kq_base, 65535);
+	EvKQBaseTimerArenaNew(kq_base, kq_base->kq_conf.arena.timer_max);
 	EvKQBaseFDArenaNew(kq_base);
 
 	/* Initialize JOB engine */
@@ -149,12 +149,15 @@ void EvKQBaseDestroy(EvKQBase *kq_base)
 	/* Destroy all upper layer objects */
 	EvKQBaseObjectDestroyAll(kq_base);
 
-	/* Destroy FD and timer ARENA */
-	EvKQBaseFDArenaDestroy(kq_base);
-	EvKQBaseTimerArenaDestroy(kq_base);
-
 	/* Destroy pending JOBs */
 	EvKQJobsEngineDestroy(kq_base);
+
+	/* Destroy FD and timer ARENA */
+	EvKQBaseFDArenaDestroy(kq_base);
+
+	/* IMPORTANT - IMPORTANT - IMPORTANT */
+	/* Some internal resources, like jobs, use timers, so, timers MUST BE destroyed AFTER */
+	EvKQBaseTimerArenaDestroy(kq_base);
 
 	/* Destroy internal EV_AIO queue */
 	EvAIOReqQueueClean(&kq_base->aio.queue);

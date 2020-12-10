@@ -133,6 +133,54 @@ char *BrbStrAddSlashes(char *src_str, int src_sz)
 	return dst_buf;
 }
 /**************************************************************************************************************************/
+char *BrbStrAddJSONSlashes(char *src_str, int src_sz)
+{
+	char *dst_buf;
+	int i, j;
+
+	if (!src_str)
+		return NULL;
+
+	/* Allocate memory */
+	dst_buf 	= calloc(1, ((src_sz * 2) + 1));
+
+	for (i = 0, j = 0; i < src_sz; i++, j++)
+	{
+		/* Double slash */
+		switch (src_str[i])
+		{
+		case '\0': dst_buf[j++] = '\\'; dst_buf[j] = '0';  break;
+		case '\a': dst_buf[j++] = '\\'; dst_buf[j] = 'a';  break;
+		case '\b': dst_buf[j++] = '\\'; dst_buf[j] = 'b';  break;
+		case '\f': dst_buf[j++] = '\\'; dst_buf[j] = 'f';  break;
+		case '\n': dst_buf[j++] = '\\'; dst_buf[j] = 'n';  break;
+		case '\r': dst_buf[j++] = '\\'; dst_buf[j] = 'r';  break;
+		case '\t': dst_buf[j++] = '\\'; dst_buf[j] = 't';  break;
+		case '\v': dst_buf[j++] = '\\'; dst_buf[j] = 'v';  break;
+		case '\\': dst_buf[j++] = '\\'; dst_buf[j] = '\\'; break;
+//		case '\?': dst_buf[j++] = '\\'; dst_buf[j] = '?';  break;
+//		case '\'': dst_buf[j++] = '\\'; dst_buf[j] = '\''; break;
+		case '\"': dst_buf[j++] = '\\'; dst_buf[j] = '\"'; break;
+		default: 						dst_buf[j] = src_str[i]; break;
+
+		}
+
+		//    	if ('\\' == src_str[i])
+		//    		dst_buf[j++] = '\\';
+
+		/* Copy byte */
+//		dst_buf[j] = src_str[i];
+
+		continue;
+	}
+
+	/* NULL terminate it */
+	dst_buf[j] = '\0';
+
+	return dst_buf;
+}
+/**************************************************************************************************************************/
+
 int BrbIsValidCpf(char *cpf_str)
 {
 	/* sanitize */
@@ -222,326 +270,6 @@ int BrbIsValidCnpj(char *cnpj_str)
 			return 0;
 	}
 	return 1;
-}
-/**************************************************************************************************************************/
-int BrbIsValidIpCidr(char *ip_cidr_str)
-{
-	char *mask_ptr;
-	int	mask_value;
-	int af_type;
-
-	/* sanitize */
-	if (!ip_cidr_str)
-		return 0;
-
-	mask_ptr 			= strchr(ip_cidr_str, '/');
-
-	if (!mask_ptr)
-		return -3;
-
-	/* convert / to finish address string  */
-	mask_ptr[0] 		= '\0';
-	mask_value 			= atoi(&mask_ptr[1]);
-
-	/* Check address */
-	af_type 			= BrbIsValidIp(ip_cidr_str);
-
-	/* convert again to / */
-	mask_ptr[0] 		= '/';
-
-	if (af_type == AF_UNSPEC)
-		return -1;
-
-	/* Get mask width */
-	if ((mask_value < 0) || (af_type == AF_INET && mask_value > 32) || (af_type == AF_INET6 && mask_value > 128))
-	{
-		return -2;
-	}
-
-	return 1;
-}
-/**************************************************************************************************************************/
-int BrbIsValidIp(char *ip_addr_str)
-{
-	struct sockaddr_storage target_sockaddr;
-
-	return BrbIsValidIpToSockAddr(ip_addr_str, &target_sockaddr);
-}
-/**************************************************************************************************************************/
-int BrbIsValidIpToSockAddr(char *ip_addr_str, struct sockaddr_storage *target_sockaddr)
-{
-	/* sanitize */
-	if (!ip_addr_str || !target_sockaddr)
-	{
-		target_sockaddr->ss_family 	= AF_UNSPEC;
-//		target_sockaddr->ss_len 	= 0;
-	}
-	else if (inet_pton(AF_INET, ip_addr_str, &((struct sockaddr_in *)target_sockaddr)->sin_addr) == 1)
-	{
-		target_sockaddr->ss_family 	= AF_INET;
-//		target_sockaddr->ss_len 	= sizeof(struct sockaddr_in);
-	}
-	else if (inet_pton(AF_INET6, ip_addr_str, &((struct sockaddr_in6 *)target_sockaddr)->sin6_addr) == 1)
-	{
-		target_sockaddr->ss_family 	= AF_INET6;
-//		target_sockaddr->ss_len 	= sizeof(struct sockaddr_in6);
-	}
-	/* Unknown case */
-	else
-	{
-		target_sockaddr->ss_family 	= AF_UNSPEC;
-//		target_sockaddr->ss_len 	= 0;
-	}
-
-	return target_sockaddr->ss_family;
-}
-/**************************************************************************************************************************/
-int BrbIpFamilyParse(const char *ip_str, BrbIpFamily *ip_family, unsigned char allow)
-{
-	/* Can't parse CIDR */
-	if (strchr(ip_str, '/'))
-		return 0;
-
-	/* Check Ipv4 valid */
-	if ((allow & IP_FAMILY_ALLOW_IPV4) && inet_pton(AF_INET, ip_str, &ip_family->u.ip4))
-	{
-		ip_family->family 	= AF_INET;
-	}
-	/* Check Ipv6 valid */
-	else if ((allow & IP_FAMILY_ALLOW_IPV6) && inet_pton(AF_INET6, ip_str, &ip_family->u.ip6))
-	{
-		ip_family->family 	= AF_INET6;
-	}
-	else
-	{
-		return 0;
-	}
-
-	return 1;
-}
-/**************************************************************************************************************************/
-int BrbNetworkSockNtop(char *ret_data_ptr, int ret_maxlen, const struct sockaddr *sa, size_t salen)
-{
-	char	portstr[7];
-	static	char str[128];	/* Unix domain is largest */
-
-	int cur_sz = 0;
-
-	switch (sa->sa_family)
-	{
-#if defined(SOCK_MAXADDRLEN)
-	case SOCK_MAXADDRLEN:
-	{
-		int	i = 0;
-		u_long	mask;
-		u_int	index = 1 << 31;
-		unsigned short	new_mask = 0;
-
-		mask = ntohl(((struct sockaddr_in *)sa)->sin_addr.s_addr);
-
-		while (mask & index)
-		{
-			new_mask++;
-			index >>= 1;
-		}
-
-		cur_sz += snprintf(ret_data_ptr, ret_maxlen, "/%hu", new_mask);
-
-		return 1;
-	}
-#endif
-	case AF_UNSPEC:
-	case AF_INET:
-	{
-		struct	sockaddr_in *sin = (struct sockaddr_in *)sa;
-		static char buf_ptr[INET6_ADDRSTRLEN + 1];
-		char *inet_ptr;
-
-		inet_ptr 		= inet_ntop(AF_INET, &sin->sin_addr, (char *)&buf_ptr, sizeof(buf_ptr));
-
-		if (!inet_ptr)
-			return 0;
-
-		cur_sz 			+= snprintf(ret_data_ptr, ret_maxlen, "%s", (char *)&buf_ptr);
-
-		/* If have port */
-		if (ntohs(sin->sin_port) != 0)
-			cur_sz 		+= snprintf(ret_data_ptr + cur_sz, ret_maxlen, ".%d", ntohs(sin->sin_port));
-
-//		/* If default route, write just default on it */
-//		if (!strcmp(ret_data_ptr, "0.0.0.0"))
-//			cur_sz = snprintf(ret_data_ptr, ret_maxlen,  "default");
-
-		return 1;
-	}
-	case AF_INET6:
-	{
-		struct	sockaddr_in *sin = (struct sockaddr_in *)sa;
-		static char buf_ptr[INET6_ADDRSTRLEN + 1];
-		char *inet_ptr;
-
-		inet_ptr 		= inet_ntop(AF_INET6, &((struct sockaddr_in6*)sin)->sin6_addr, buf_ptr, sizeof(buf_ptr));
-
-		if (!inet_ptr)
-			return 0;
-
-		cur_sz 			+= snprintf(ret_data_ptr, ret_maxlen, "%s", buf_ptr);
-
-		/* If have port */
-		if (ntohs(sin->sin_port) != 0)
-			cur_sz 		+= snprintf(ret_data_ptr + cur_sz, ret_maxlen, ".%d", ntohs(sin->sin_port));
-
-		return 1;
-	}
-
-#if defined(AF_LINK)
-	case AF_LINK:
-	{
-		struct	sockaddr_dl *sdl = (struct sockaddr_dl *)sa;
-		char *cp;
-
-		if (sdl->sdl_nlen > 0)
-		{
-//			switch (sdl->sdl_type) {
-//
-//			case IFT_ETHER:
-//			case IFT_L2VLAN:
-//			case IFT_BRIDGE:
-//				if (sdl->sdl_alen == ETHER_ADDR_LEN) {
-//					cp = ether_ntoa((struct ether_addr *)
-//						(sdl->sdl_data + sdl->sdl_nlen));
-//					break;
-//				}
-//				/* FALLTHROUGH */
-//			default:
-//				cp = link_ntoa(sdl);
-//				break;
-//			}
-//
-//			strlcpy(ret_data_ptr, cp, (sdl->sdl_nlen + 1));
-
-			strlcpy(ret_data_ptr, sdl->sdl_data, (sdl->sdl_nlen + 1));
-			//printf("SysControl_NetworkSockNtop - AFF_LINK -> [%d]-[%s]-[%s]\n", sdl->sdl_nlen, sdl->sdl_data, ret_data_ptr);
-
-		}
-		else
-			snprintf(ret_data_ptr, ret_maxlen, "link#%d", sdl->sdl_index);
-
-		return 1;
-	}
-#endif
-	default:
-		snprintf(ret_data_ptr, ret_maxlen, "unknown %d", sa->sa_family);
-		return 0;
-	}
-
-	return 0;
-}
-/**************************************************************************************************************************/
-int BrbNetworkSockMask(char *ret_data_ptr, int ret_maxlen, const struct sockaddr *sa)
-{
-	int cur_sz = 0;
-
-	switch (sa->sa_family)
-	{
-	case AF_UNSPEC:
-	case AF_INET:
-	{
-		int	i = 0;
-		unsigned long	mask;
-		unsigned int	index = 1 << 31;
-		unsigned short	new_mask = 0;
-
-		mask = ntohl(((struct sockaddr_in *)sa)->sin_addr.s_addr);
-
-		while (mask & index)
-		{
-			new_mask++;
-			index >>= 1;
-		}
-
-		cur_sz 	+= snprintf(ret_data_ptr, ret_maxlen, "/%hu", new_mask);
-
-		return 1;
-	}
-	case AF_INET6:
-	{
-		struct in6_addr *mask = &((struct sockaddr_in6*)sa)->sin6_addr;
-		unsigned char *p = (unsigned char *)mask;
-		unsigned char *lim;
-		int masklen, illegal = 0, flag = 0;
-
-		for (masklen = 0, lim = p + 16; p < lim; p++) {
-			switch (*p) {
-			 case 0xff:
-				 masklen += 8;
-				 break;
-			 case 0xfe:
-				 masklen += 7;
-				 break;
-			 case 0xfc:
-				 masklen += 6;
-				 break;
-			 case 0xf8:
-				 masklen += 5;
-				 break;
-			 case 0xf0:
-				 masklen += 4;
-				 break;
-			 case 0xe0:
-				 masklen += 3;
-				 break;
-			 case 0xc0:
-				 masklen += 2;
-				 break;
-			 case 0x80:
-				 masklen += 1;
-				 break;
-			 case 0x00:
-				 break;
-			 default:
-				 illegal ++;
-				 break;
-			}
-
-			if (illegal)
-				break;
-		}
-
-//		if (illegal)
-//		{
-//			cur_sz 	+= snprintf(ret_data_ptr, ret_maxlen, "/%d -%d", masklen, illegal);
-//
-//			return 0;
-//		}
-
-		cur_sz 	+= snprintf(ret_data_ptr, ret_maxlen, "/%d", masklen);
-
-		return 1;
-	}
-
-	default:
-
-		strlcpy(ret_data_ptr, "", 1);
-
-		return 0;
-	}
-
-	return 0;
-}
-/**************************************************************************************************************************/
-int BrbIsValidIpV4(char *ip_addr_str, struct in_addr *ip4)
-{
-	/* sanitize */
-	if (!ip_addr_str)
-		return 0;
-
-	if (inet_pton(AF_INET, ip_addr_str, ip4))
-	{
-		return 1;
-	}
-
-	return 0;
 }
 /**************************************************************************************************************************/
 int BrbIsNumeric(char *str)
@@ -911,25 +639,26 @@ unsigned int BrbSimpleHashStr(const char *key, unsigned int len, unsigned int se
 	return hash;
 }
 /**************************************************************************************************************************/
-unsigned char *BrbMacStrToOctedDup(char *mac_str)
+int BrbStrToLower(char *str_ptr)
 {
-	struct ether_addr *ether_addr;
-	unsigned char mac[6];
+	int str_len = strlen(str_ptr);
 	int i;
 
-	ether_addr 				= ether_aton(mac_str);
+	for (i = 0; i < str_len; i++)
+		str_ptr[i] = towlower(str_ptr[i]);
 
-	if (!ether_addr)
-		return NULL;
-#if defined(linux)
-	for(i=0; i < 6; i++)
-		mac[i] = (unsigned char)ether_addr->ether_addr_octet[i];
-#else
-	for(i=0; i < 6; i++)
-		mac[i] = (unsigned char)ether_addr->octet[i];
-#endif
+	return i;
+}
+/**************************************************************************************************************************/
+int BrbStrToUpper(char *str_ptr)
+{
+	int str_len = strlen(str_ptr);
+	int i;
 
-	return (unsigned char *)memcpy(calloc(1, sizeof(unsigned int) * 6), mac, 6);
+	for (i = 0; i < str_len; i++)
+		str_ptr[i] = towupper(str_ptr[i]);
+
+	return i;
 }
 /**************************************************************************************************************************/
 int BrbStrCompare(char *strcur, char *strcmp)
@@ -956,6 +685,56 @@ int BrbStrCompare(char *strcur, char *strcmp)
 	}
 
 	/* strings begin with the same characters, check who have more characters to ordenate  */
-	return ( strcur[i] != '0' ? 1 : 0);
+	return ( strcur[i] != '\0' ? 1 : 0);
+}
+/**************************************************************************************************************************/
+int BrbStrFindSubStrReverse(char *buffer_str, int buffer_sz, char *substring_str, int substring_sz)
+{
+	int idx;
+	int token_idx;
+	int i;
+
+	/* 0000000000001230000  */
+	/*                   i  */
+	/*                   t  */
+
+	/* 0000000000001230000  */
+	/*                   i  */
+	/*                   t  */
+
+	if (buffer_sz < substring_sz)
+		return -1;
+
+	/* Start searching the buffer */
+	for (i = (buffer_sz - substring_sz); i >= 0; i--)
+	{
+		/* Found finish of token, compare full token versus buffer */
+		if ((buffer_str[i] == substring_str[0]) && (!memcmp(&buffer_str[i], substring_str, substring_sz)) )
+			return i + substring_sz;
+
+		continue;
+	}
+
+	/* Can't Found Substring */
+	return -1;
+}
+/**************************************************************************************************************************/
+/* Time Utils */
+/**************************************************************************************************************************/
+unsigned int BrbTimeLt(const struct timeval *a, const struct timeval *b)
+{
+    return (a->tv_sec == b->tv_sec) ? (a->tv_usec < b->tv_usec) : (a->tv_sec < b->tv_sec);
+}
+/**************************************************************************************************************************/
+void BrbTimeSub(const struct timeval *a, const struct timeval *b, struct timeval *result)
+{
+    result->tv_sec 		= a->tv_sec - b->tv_sec;
+    result->tv_usec 	= a->tv_usec - b->tv_usec;
+
+    if (result->tv_usec < 0)
+    {
+        --result->tv_sec;
+        result->tv_usec 	+= 1000000;
+    }
 }
 /**************************************************************************************************************************/
