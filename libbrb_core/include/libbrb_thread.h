@@ -34,10 +34,14 @@
 
 #ifndef LIBBRB_THRD_H_
 #define LIBBRB_THRD_H_
-
+/**************************************************************************************************************************/
+/* DEFINES */
+/***********************************************************************/
 #define THREAD_POOL_JOBS_MAX_ENQUEUED_COUNT 4096
 #define THREAD_POOL_JOBS_MAX_USERDATA_SIZE	1024
-
+/**************************************************************************************************************************/
+/* TYPES */
+/***********************************************************************/
 typedef void *ThreadInstanceEntryPoint(void *);
 typedef int ThreadInstanceJobFinishCB(void *, void *);
 
@@ -47,7 +51,9 @@ typedef void *ThreadInstanceJobCB_RetPTR(void *, void *);
 typedef int ThreadInstanceJobCB_RetINT(void *, void *);
 typedef long ThreadInstanceJobCB_RetLONG(void *, void *);
 typedef float ThreadInstanceJobCB_RetFLOAT(void *, void *);
-
+/**************************************************************************************************************************/
+/* ENUMS */
+/***********************************************************************/
 typedef enum
 {
 	THREAD_INSTANCE_STATE_STARTING,
@@ -58,7 +64,7 @@ typedef enum
 	THREAD_INSTANCE_STATE_SHUTDOWN,
 	THREAD_INSTANCE_STATE_LASTITEM
 } ThreadPoolInstanceCurrentStatus;
-
+/***********************************************************************/
 typedef enum
 {
 	THREAD_JOB_RETVAL_NONE,
@@ -68,14 +74,14 @@ typedef enum
 	THREAD_JOB_RETVAL_FLOAT,
 	THREAD_JOB_RETVAL_LASTITEM
 } ThreadJobReturnValueTypes;
-
+/***********************************************************************/
 typedef enum
 {
 	THREAD_NOTIFY_PIPE_MAIN,
 	THREAD_NOTIFY_PIPE_THREADS,
 	THREAD_NOTIFY_PIPE_LASTITEM,
 } ThreadNotifyPipeCode;
-
+/***********************************************************************/
 typedef enum
 {
 	THREAD_LIST_JOB_PENDING,
@@ -83,7 +89,7 @@ typedef enum
 	THREAD_LIST_JOB_DONE,
 	THREAD_LIST_JOB_LASTITEM,
 } ThreadJobListCode;
-
+/***********************************************************************/
 typedef struct _ThreadPoolInstance
 {
 	DLinkedListNode node;
@@ -103,7 +109,7 @@ typedef struct _ThreadPoolInstance
 	} flags;
 
 } ThreadPoolInstance;
-
+/***********************************************************************/
 typedef struct _ThreadPoolJobProto
 {
 	ThreadInstanceJobCB_Generic *job_cbh_ptr;
@@ -120,13 +126,13 @@ typedef struct _ThreadPoolJobProto
 	char *udata;
 	int udata_sz;
 } ThreadPoolJobProto;
-
+/***********************************************************************/
 typedef struct _ThreadPoolNotifyData
 {
 	int job_id;
 	int thrd_id;
 } ThreadPoolNotifyData;
-
+/***********************************************************************/
 typedef struct _ThreadPoolInstanceJob
 {
 	DLinkedListNode node;
@@ -184,8 +190,10 @@ typedef struct _ThreadPoolInstanceJob
 
 	char user_data_buf[THREAD_POOL_JOBS_MAX_USERDATA_SIZE];
 
-} ThreadPoolInstanceJob;
+	int job_error;
 
+} ThreadPoolInstanceJob;
+/***********************************************************************/
 typedef struct _ThreadPoolBaseConfig
 {
 	struct _EvKQBaseLogBase *log_base;
@@ -202,7 +210,7 @@ typedef struct _ThreadPoolBaseConfig
 	} flags;
 
 } ThreadPoolBaseConfig;
-
+/***********************************************************************/
 typedef struct _ThreadPoolBase
 {
 	struct _EvKQBase *ev_base;
@@ -234,8 +242,7 @@ typedef struct _ThreadPoolBase
 	} flags;
 
 } ThreadPoolBase;
-
-
+/***********************************************************************/
 typedef struct _ThreadAIOBaseConf
 {
 	ThreadPoolBaseConfig pool_conf;
@@ -251,7 +258,7 @@ typedef struct _ThreadAIOBaseConf
 	} flags;
 
 } ThreadAIOBaseConf;
-
+/***********************************************************************/
 typedef struct _ThreadAIOBase
 {
 	ThreadPoolBase *thrd_pool;
@@ -280,15 +287,16 @@ typedef struct _ThreadAIOBase
 	} flags;
 
 } ThreadAIOBase;
-
+/**************************************************************************************************************************/
 /* thread/thrd_pool_base.c */
 ThreadPoolBase *ThreadPoolBaseNew(struct _EvKQBase *ev_base, ThreadPoolBaseConfig *thread_pool_conf);
 void ThreadPoolBaseDestroy(ThreadPoolBase *thread_pool);
 int ThreadPoolAllBusy(ThreadPoolBase *thread_pool);
 int ThreadPoolJobCancel(ThreadPoolBase *thread_pool, int job_id);
 int ThreadPoolJobEnqueue(ThreadPoolBase *thread_pool, ThreadPoolJobProto *job_proto);
+int ThreadPoolJobSimple(ThreadPoolBase *thread_pool, ThreadInstanceJobCB_Generic *job_cbh_ptr, ThreadInstanceJobFinishCB *job_finish_cbh_ptr, int retval_type, void *cb_data, void *cb_finish, void *user_data);
 int ThreadPoolJobConsumeReplies(ThreadPoolBase *thread_pool);
-
+/***********************************************************************/
 /* thread/thrd_aio_base.c */
 ThreadAIOBase *ThreadAIOBaseNew(struct _EvKQBase *ev_base, ThreadAIOBaseConf *thrd_aio_base_conf);
 int ThreadAIOBaseDestroy(ThreadAIOBase *thrd_aio_base);
@@ -303,11 +311,17 @@ int ThreadAIOFileWriteFromMemBuffer(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_
 		int fd, char *path_str, long size, long offset, EvAIOReqCBH *finish_cb, void *finish_cbdata);
 int ThreadAIOFileWrite(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, int fd, char *buffer, long size, long offset, EvAIOReqCBH *finish_cb, void *finish_cbdata);
 int ThreadAIOFileStat(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, EvAIOReqCBH *finish_cb, void *finish_cbdata);
+
 int ThreadAIOFileUnlink(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, EvAIOReqCBH *finish_cb, void *finish_cbdata);
+int ThreadAIOFileRemove(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, EvAIOReqCBH *finish_cb, void *finish_cbdata);
+
 int ThreadAIOFileTruncate(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, long size, EvAIOReqCBH *finish_cb, void *finish_cbdata);
+int ThreadAIOFileRename(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, char *dst_str, EvAIOReqCBH *finish_cb, void *finish_cbdata);
+int ThreadAIOFileCopy(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, char *dst_str, EvAIOReqCBH *finish_cb, void *finish_cbdata);
+int ThreadAIOFileMove(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, char *dst_str, EvAIOReqCBH *finish_cb, void *finish_cbdata);
 
 int ThreadAIODeviceMount(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, char *dev_str, int retry_count, int flags, EvAIOReqCBH *finish_cb, void *finish_cbdata);
 int ThreadAIODeviceUnMount(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, char *dev_str, int retry_count, int flags, EvAIOReqCBH *finish_cb, void *finish_cbdata);
-
-
+int ThreadAIOCustom(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *dev_str, EvAIOReqCBH *custom_cb, EvAIOReqCBH *finish_cb, void *finish_cbdata);
+/**************************************************************************************************************************/
 #endif /* LIBBRB_THRD_H_ */

@@ -171,7 +171,7 @@ CommEvUNIXClient *CommEvUNIXClientPoolClientSelectLeastLoad(CommEvUNIXClientPool
 		ev_unixclient = (CommEvUNIXClient*)MemSlotBaseSlotGrabByID(&unix_clientpool->client.memslot, i);
 
 		/* This client is disconnected, and we just want connected clients, ignore it */
-		if ((select_connected == COMM_UNIX_SELECT_CONNECTED) && (ev_unixclient->socket_state != COMM_UNIX_CLIENT_STATE_CONNECTED))
+		if ((select_connected == COMM_UNIX_SELECT_CONNECTED) && (ev_unixclient->socket_state != COMM_CLIENT_STATE_CONNECTED))
 			continue;
 
 		/* Grab QUEUED request size */
@@ -223,7 +223,7 @@ CommEvUNIXClient *CommEvUNIXClientPoolClientSelectRoundRobin(CommEvUNIXClientPoo
 		unix_clientpool->client.rr_current = ((unix_clientpool->client.rr_current + 1) % unix_clientpool->pool_conf.cli_count_max);
 
 		/* This client is disconnected, and we just want connected clients, ignore it */
-		if ((select_connected == COMM_UNIX_SELECT_CONNECTED) && (ev_unixclient->socket_state != COMM_UNIX_CLIENT_STATE_CONNECTED))
+		if ((select_connected == COMM_UNIX_SELECT_CONNECTED) && (ev_unixclient->socket_state != COMM_CLIENT_STATE_CONNECTED))
 			continue;
 
 		KQBASE_LOG_PRINTF(unix_clientpool->log_base, LOGTYPE_INFO, LOGCOLOR_PURPLE, "Selected UNIX_CLIENT ID [%d]\n", ev_unixclient->cli_id_onpool);
@@ -247,7 +247,7 @@ int CommEvUNIXClientPoolHasConnected(CommEvUNIXClientPool *unix_clientpool)
 		ev_unixclient = (CommEvUNIXClient*)MemSlotBaseSlotGrabByID(&unix_clientpool->client.memslot, i);
 
 		/* This client is disconnected, and we just want connected clients, ignore it */
-		if (ev_unixclient->socket_state == COMM_UNIX_CLIENT_STATE_CONNECTED)
+		if (ev_unixclient->socket_state == COMM_CLIENT_STATE_CONNECTED)
 			return 1;
 
 		continue;

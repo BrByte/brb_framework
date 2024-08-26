@@ -360,20 +360,6 @@ void CommEvSSLUtils_X509CertRefCountInc(X509 *crt, int thread_safe)
 	return;
 }
 /**************************************************************************************************************************/
-void CommEvSSLUtils_X509PrivateKeyRefCountInc(EVP_PKEY *key, int thread_safe)
-{
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-	if (thread_safe)
-		CRYPTO_add(&key->references, 1, CRYPTO_LOCK_EVP_PKEY);
-	else
-		key->references++;
-#else
-	EVP_PKEY_up_ref(key);
-#endif
-
-	return;
-}
-/**************************************************************************************************************************/
 int CommEvSSLUtils_X509CopyRandom(X509 *dstcrt, X509 *srccrt)
 {
 	ASN1_INTEGER *srcptr, *dstptr;
@@ -454,20 +440,49 @@ int CommEvSSLUtils_Random(void *p, unsigned long sz)
 /**************************************************************************************************************************/
 X509 *CommEvSSLUtils_X509CertFromPEM(char *pem_str, int pem_strsz)
 {
-	BIO *bio;
-	X509 *cert;
+	BIO *cert_bio;
+	X509 *cert_x509;
+	int op_status;
 
-	bio = BIO_new(BIO_s_mem());
+    if (!pem_str)
+    {
+    	errno 		= EINVAL;
+    	return NULL;
+    }
+
+	cert_bio 		= BIO_new(BIO_s_mem());
+
+    if (!cert_bio)
+    {
+    	errno 		= ENOMEM;
+    	return NULL;
+    }
 
 	/* Load PEM string into BIO */
-	//BIO_write(bio,(const void*)pem_str, pem_strsz);
-	BIO_puts(bio, pem_str);
+    if (pem_strsz > 0)
+    	op_status 	= BIO_write(cert_bio, (const void*)pem_str, pem_strsz);
+    else
+    	op_status 	= BIO_puts(cert_bio, pem_str);
 
-	cert = PEM_read_bio_X509(bio,NULL,0,NULL);
+    if (op_status <= 0)
+    {
+    	errno 		= ENOEXEC;
+    	BIO_free(cert_bio);
+    	return NULL;
+    }
 
-	BIO_free(bio);
+	cert_x509		= PEM_read_bio_X509(cert_bio, NULL, 0, NULL);
 
-	return cert;
+    if (!cert_x509)
+    {
+    	errno 		= EIO;
+    	BIO_free(cert_bio);
+    	return NULL;
+    }
+
+	BIO_free(cert_bio);
+
+	return cert_x509;
 }
 /**************************************************************************************************************************/
 void CommEvSSLUtils_X509CertToStr(X509 *crt, char *ret_buf, int ret_buf_maxsz)
@@ -562,102 +577,6 @@ int CommEvSSLUtils_X509CertToFile(const char *filename, X509 *cert)
 	fclose(file_fp);
 
 	return 1;
-}
-/**************************************************************************************************************************/
-/**/
-/**/
-/**************************************************************************************************************************/
-EVP_PKEY *CommEvSSLUtils_X509PrivateKeyFromPEM(char *pem_str, int pem_strsz)
-{
-	BIO *bio;
-	EVP_PKEY *priv_key;
-
-	bio = BIO_new(BIO_s_mem());
-
-	/* Load PEM string into BIO */
-	BIO_puts(bio, pem_str);
-
-	priv_key = PEM_read_bio_PrivateKey(bio, NULL, 0, NULL);
-
-	BIO_free(bio);
-
-	return priv_key;
-}
-/**************************************************************************************************************************/
-void CommEvSSLUtils_X509PrivateKeyToPEM(EVP_PKEY *key, char *ret_buf, int ret_buf_maxsz)
-{
-	BIO *bio;
-	char *p, *ret;
-	size_t sz;
-
-	/* NULL terminate return buffer */
-	memset(ret_buf, 0, ret_buf_maxsz);
-
-	bio = BIO_new(BIO_s_mem());
-
-	if (!bio)
-		return;
-
-	PEM_write_bio_PrivateKey(bio, key, NULL, NULL, 0, NULL, NULL);
-	sz = BIO_get_mem_data(bio, &p);
-
-	/* Copy PEM string into destination buffer */
-	strlcpy(ret_buf, p, sz);
-	ret_buf[sz] = '\0';
-
-	BIO_free(bio);
-
-	return;
-}
-/**************************************************************************************************************************/
-int CommEvSSLUtils_X509PrivateKeyWriteToFile(const char *filename, EVP_PKEY *key)
-{
-	FILE *file_fp;
-	int op_status;
-
-	/* Try to open file for writing */
-	file_fp = fopen(filename, "w+");
-
-	/* Failed to open file for writing, bail out */
-	if (!file_fp)
-		return 0;
-
-	op_status = PEM_write_PrivateKey(file_fp, key, NULL, NULL, 0, 0, NULL);
-
-	/* Failed writing, bail out */
-	if (op_status != 1)
-	{
-		fclose(file_fp);
-		return 0;
-	}
-
-	/* Flush and close */
-	fflush(file_fp);
-	fclose(file_fp);
-
-	return 1;
-}
-/**************************************************************************************************************************/
-EVP_PKEY *CommEvSSLUtils_X509PrivateKeyReadFromFile(const char *filename)
-{
-	EVP_PKEY *key;
-	FILE *file_fp;
-	int op_status;
-
-	/* Try to open file for writing */
-	file_fp = fopen (filename, "r");
-
-	/* Failed to open file for writing, bail out */
-	if (!file_fp)
-		return 0;
-
-	key	= EVP_PKEY_new();
-	PEM_read_PrivateKey(file_fp, &key, NULL, NULL);
-
-	/* Close */
-	fclose(file_fp);
-
-	return key;
 }
 /**************************************************************************************************************************/
 /**/
@@ -759,50 +678,6 @@ EVP_PKEY *CommEvSSLUtils_X509PublicKeyReadFromFile(const char *filename)
 /**************************************************************************************************************************/
 /**/
 /**/
-/**************************************************************************************************************************/
-
-
-
-
-
-
-
-int CommEvSSLUtils_GenerateRSAToServer(CommEvTCPServer *srv_ptr, const int keysize)
-{
-	/* Sanity check */
-	if (!srv_ptr)
-		return 0;
-
-	/* Generate RSA key */
-	srv_ptr->ssldata.rsa_key = RSA_generate_key(keysize, 3, NULL, NULL);
-
-	/* Failed generating RSA key */
-	if (!srv_ptr->ssldata.rsa_key)
-		return 0;
-
-	/* Generate private key */
-	srv_ptr->ssldata.main_key =  EVP_PKEY_new();
-
-	/* Assign private key to RSA key - Does not increment REFCOUNT */
-	EVP_PKEY_assign_RSA(srv_ptr->ssldata.main_key, srv_ptr->ssldata.rsa_key);
-
-	return 1;
-}
-/**************************************************************************************************************************/
-void CommEvSSLUtils_GenerateRSA(EVP_PKEY **dst_pkey, RSA **dst_rsa, const int keysize)
-{
-	dst_rsa[0] = RSA_generate_key(keysize, 3, NULL, NULL);
-
-	if (!dst_rsa[0])
-		return;
-
-	dst_pkey[0] = EVP_PKEY_new();
-
-	/* Assign private key to RSA key - Does not increment REFCOUNT */
-	EVP_PKEY_assign_RSA(dst_pkey[0], dst_rsa[0]);
-
-	return;
-}
 /**************************************************************************************************************************/
 int CommEvSSLUtils_X509CertRootNew(CommEvSSLUtilsCertReq *cert_req)
 {
@@ -1273,9 +1148,6 @@ int CommEvSSLUtils_SNIParse(const unsigned char *buf, int *sz, char *ret_buf, in
 	return n;
 }
 /**************************************************************************************************************************/
-
-
-
 
 
 //static RSA *CommEvTCPServerSSLGenerateRSACB(SSL *ssl_handle, int export, int keylen)

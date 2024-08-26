@@ -149,7 +149,6 @@
 #define COMM_EV_TCP_CLIENT_FINISH(client) if (client->flags.destroy_after_close) CommEvTCPClientDestroy(client); else CommEvTCPClientDisconnect(client);
 #define COMM_EV_TCP_CLIENT_INTERNAL_FINISH(client) if (client->flags.destroy_after_close) CommEvTCPClientDestroy(client); else CommEvTCPClientInternalDisconnect(client);
 #define COMM_SERIAL_FINISH(serial) if (serial->flags.destroy_after_close) CommEvSerialPortDestroy(serial); else CommEvSerialPortClose(serial);
-
 /******************************************************************************************************/
 /**/
 /**/
@@ -160,7 +159,7 @@ typedef enum
 	COMM_EV_IOFUNC_WRITE,
 	COMM_EV_IOFUNC_LASTITEM
 } CommEvIOFuncCodes;
-
+/*******************************************************/
 typedef enum
 {
 	COMM_CRYPTO_FUNC_NONE,
@@ -169,7 +168,7 @@ typedef enum
 	COMM_CRYPTO_FUNC_BLOWFISH,
 	COMM_CRYPTO_FUNC_LASTITEM
 } CommCryptoFuncCodes;
-
+/*******************************************************/
 typedef enum
 {
 	COMM_RATES_READ,
@@ -203,7 +202,7 @@ typedef struct _CommEvSSLUtilsCertReq
 	} result;
 
 } CommEvSSLUtilsCertReq;
-
+/*******************************************************/
 typedef struct _CommEvCryptoInfo
 {
 	int algo_code;
@@ -235,14 +234,12 @@ typedef struct _CommEvCryptoInfo
 	} flags;
 
 } CommEvCryptoInfo;
-
+/*******************************************************/
 typedef struct _CommEvContentTransformerInfo
 {
 	CommEvCryptoInfo crypto;
 
 } CommEvContentTransformerInfo;
-
-
 /******************************************************************************************************/
 /**/
 /**/
@@ -275,17 +272,26 @@ typedef struct _CommEvContentTransformerInfo
 #define COMM_SERVER_CONN_CAN_ENQUEUE(conn_hnd)					(conn_hnd->flags.conn_unlimited_enqueue || (conn_hnd->parent_srv->cfg[conn_hnd->listener->slot_id].cli_queue_max <= 0) ? 1 : \
 		((conn_hnd->iodata.write_queue.stats.queue_sz < conn_hnd->parent_srv->cfg[conn_hnd->listener->slot_id].cli_queue_max) ? 1 : 0))
 
-
-
 /*******************************************************/
 typedef void CommEvTCPServerCBH(int, int, int, void*, void*);
 /*******************************************************/
 typedef enum
 {
 	COMM_SERVER_BINDLOOPBACK,
-	COMM_SERVER_BINDANY
-} CommEvTCPServerBindMethod;
+	COMM_SERVER_BINDANY,
+	COMM_SERVER_BIND_LAST_ITEM
 
+} CommEvTCPServerBindMethod;
+/*******************************************************/
+typedef enum
+{
+	COMM_SERVER_TYPE_INET,
+	COMM_SERVER_TYPE_INET6,
+	COMM_SERVER_TYPE_UNIX,
+	COMM_SERVER_TYPE_LAST_ITEM
+
+} CommEvTCPServerType;
+/*******************************************************/
 typedef enum
 {
 	COMM_SERVERPROTO_PLAIN,
@@ -293,13 +299,13 @@ typedef enum
 	COMM_SERVERPROTO_AUTODETECT,
 	COMM_SERVERPROTO_LASTITEM,
 } CommEvTCPServerProtocol;
-
+/*******************************************************/
 typedef enum
 {
 	COMM_SERVER_READ_MEMBUFFER,
 	COMM_SERVER_READ_MEMSTREAM,
 } CommEvTCPServerReadMethod;
-
+/*******************************************************/
 typedef enum
 {
 	COMM_SERVER_FAILURE_NOTUSED00,
@@ -317,7 +323,31 @@ typedef enum
 	COMM_SERVER_FAILURE_LASTITEM,
 	COMM_SERVER_INIT_OK
 } CommEvTCPServerInitCodes;
+/*******************************************************/
+typedef enum
+{
+	COMM_CLIENT_INIT_OK,
+//	COMM_CLIENT_FAILURE_NOTUSED00,
+	COMM_CLIENT_FAILURE_SOCKET,
+	COMM_CLIENT_FAILURE_REUSEADDR,
+//	COMM_CLIENT_FAILURE_REUSEPORT,
+//	COMM_CLIENT_FAILURE_BIND,
+//	COMM_CLIENT_FAILURE_LISTEN,
+	COMM_CLIENT_FAILURE_SETNONBLOCKING,
+	COMM_CLIENT_FAILURE_SSL_CONTEXT,
+	COMM_CLIENT_FAILURE_SSL_CIPHER,
+	COMM_CLIENT_FAILURE_SSL_CERT,
+	COMM_CLIENT_FAILURE_SSL_KEY,
+	COMM_CLIENT_FAILURE_SSL_MATCH,
+	COMM_CLIENT_FAILURE_SSL_CA,
+	COMM_CLIENT_FAILURE_SSL_HANDLE,
+	COMM_CLIENT_FAILURE_SSL_PEER,
 
+//	COMM_CLIENT_FAILURE_NO_MORE_SLOTS,
+	COMM_CLIENT_FAILURE_UNKNOWN,
+	COMM_CLIENT_FAILURE_LASTITEM,
+} CommEvTCPClientInitCodes;
+/*******************************************************/
 typedef enum
 {
 	COMM_SERVER_EVENT_ACCEPT_BEFORE,
@@ -329,7 +359,7 @@ typedef enum
 	COMM_SERVER_EVENT_DEFAULT_CLOSE,
 	COMM_SERVER_EVENT_LASTITEM
 } CommEvTCPServerEventCodes;
-
+/*******************************************************/
 typedef enum
 {
 	CONN_EVENT_READ,
@@ -351,7 +381,7 @@ typedef struct _CommEvTCPServerCertificate
 	RSA *key_pair;
 	STACK_OF(X509) *cert_chain;
 } CommEvTCPServerCertificate;
-
+/************************************************************/
 typedef struct _CommEvTCPServerConnTransferData
 {
 	int write_pending_bytes;
@@ -369,13 +399,15 @@ typedef struct _CommEvTCPServerConnTransferData
 	} flags;
 
 } CommEvTCPServerConnTransferData;
-
+/************************************************************/
 typedef struct _CommEvTCPServerConf
 {
 	CommEvTCPServerBindMethod bind_method;
 	CommEvTCPServerReadMethod read_mthd;
 	CommEvTCPServerProtocol srv_proto;
-	struct sockaddr_in bind_addr;
+	CommEvTCPServerType srv_type;
+
+	struct sockaddr_storage bind_addr;
 	int port;
 
 	struct
@@ -398,6 +430,7 @@ typedef struct _CommEvTCPServerConf
 
 	struct
 	{
+		SSL_CTX *ssl_context;
 		char *ca_key_path;
 		char *ca_cert_path;
 	} ssl;
@@ -423,11 +456,12 @@ typedef struct _CommEvTCPServerConf
 	} flags;
 
 } CommEvTCPServerConf;
-
+/************************************************************/
 typedef struct _CommEvTCPServerListener
 {
 	DLinkedListNode node;
 	struct _CommEvTCPServer *parent_srv;
+
 	int unix_lid;
 	int slot_id;
 	int socket_fd;
@@ -443,8 +477,9 @@ typedef struct _CommEvTCPServerListener
 		unsigned int active:1;
 		unsigned int unix_server_active:1;
 	} flags;
-} CommEvTCPServerListener;
 
+} CommEvTCPServerListener;
+/************************************************************/
 typedef struct _CommEvTCPServerConnEventPrototype
 {
 	CommEvTCPServerCBH *cb_handler_ptr;
@@ -459,7 +494,7 @@ typedef struct _CommEvTCPServerConnEventPrototype
 	} flags;
 
 } CommEvTCPServerConnEventPrototype;
-
+/************************************************************/
 typedef struct _CommEvTCPServer
 {
 	EvBaseKQObject kq_obj;
@@ -510,7 +545,9 @@ typedef struct _CommEvTCPServer
 		CommEvTCPServerBindMethod bind_method;
 		CommEvTCPServerReadMethod read_mthd;
 		CommEvTCPServerProtocol srv_proto;
-		struct sockaddr_in bind_addr;
+		CommEvTCPServerType srv_type;
+
+		struct sockaddr_storage bind_addr;
 		long cli_queue_max;
 		int port;
 
@@ -545,7 +582,7 @@ typedef struct _CommEvTCPServer
 	} cfg [COMM_TCP_SERVER_MAX_LISTERNERS];
 
 } CommEvTCPServer;
-
+/************************************************************/
 typedef struct _CommEvTCPServerConn
 {
 	DLinkedListNode conn_node;
@@ -557,14 +594,21 @@ typedef struct _CommEvTCPServerConn
 
 	struct _CommEvTCPServerListener *listener;
 	struct _CommEvTCPServer *parent_srv;
-	struct sockaddr_in conn_addr;
-	struct sockaddr_in local_addr;
-	char string_ip[16];
+
+	struct sockaddr_storage conn_addr;
+	struct sockaddr_storage local_addr;
+
+	char string_ip[48];
+	char server_ip[48];
+
+	int cli_port;
 	int socket_fd;
 
 	DLinkedList user_list;
-	long user_long;
+
+	int thrd_id;
 	int user_int;
+	long user_long;
 	void *user_data;
 
 	void *webengine_data;
@@ -618,10 +662,11 @@ typedef struct _CommEvTCPServerConn
 	} flags;
 
 } CommEvTCPServerConn;
+/************************************************************/
 #define COMM_TCP_CLIENT_POOL_MAX	64
-
+/************************************************************/
 typedef void CommEvTCPClientCBH(int, int, int, void*, void*);
-/*******************************************************/
+/************************************************************/
 typedef enum
 {
 	COMM_CLIENT_EVENT_READ,
@@ -630,14 +675,14 @@ typedef enum
 	COMM_CLIENT_EVENT_CONNECT,
 	COMM_CLIENT_EVENT_LASTITEM
 } CommEvTCPClientEventCodes;
-
+/************************************************************/
 typedef enum
 {
 	COMM_CLIENTPROTO_PLAIN,
 	COMM_CLIENTPROTO_SSL,
 	COMM_CLIENTPROTO_LASTITEM,
 } CommEvTCPClientProtocol;
-
+/************************************************************/
 typedef enum
 {
 	COMM_CLIENT_STATE_DISCONNECTED,
@@ -656,21 +701,22 @@ typedef enum
 	COMM_CLIENT_STATE_CONNECT_FAILED_UNKNWON,
 	COMM_CLIENT_STATE_LASTITEM
 } CommEvTCPClientStateCodes;
-
-typedef enum
-{
-	COMM_CLIENT_FAILURE_SOCKET,
-	COMM_CLIENT_FAILURE_REUSEADDR,
-	COMM_CLIENT_FAILURE_SETNONBLOCKING,
-	COMM_CLIENT_INIT_OK
-} CommEvTCPClientInitCodes;
-
+/************************************************************/
 typedef enum
 {
 	COMM_CLIENT_READ_MEMBUFFER,
 	COMM_CLIENT_READ_MEMSTREAM,
 } CommEvTCPClientReadMethod;
+/************************************************************/
+typedef enum
+{
+	COMM_CLIENT_ADDR_TYPE_INET_4,
+	COMM_CLIENT_ADDR_TYPE_INET_6,
+	COMM_CLIENT_ADDR_TYPE_INET_46,
+	COMM_CLIENT_ADDR_TYPE_INET_64
 
+} CommEvTCPClientAddrMethod;
+/************************************************************/
 typedef enum
 {
 	COMM_POOL_SELECT_ROUND_ROBIN,
@@ -679,16 +725,43 @@ typedef enum
 	COMM_POOL_SELECT_ANY,
 	COMM_POOL_SELECT_LASTITEM
 } CommEvPoolSelectCode;
+/************************************************************/
+static const char *CommEvTCPClientStateCodesStr[] =
+{
+		"COMM_CLIENT_STATE_DISCONNECTED",
+		"COMM_CLIENT_STATE_RESOLVING_DNS",
+		"COMM_CLIENT_STATE_CONNECTING",
+		"COMM_CLIENT_STATE_CONNECTED_NEGOTIATING_SSL",
+		"COMM_CLIENT_STATE_CONNECTED_NEGOTIATING_SECURE_TUNNEL",
+		"COMM_CLIENT_STATE_CONNECTED",
+		"COMM_CLIENT_STATE_CONNECT_FAILED_TIMEOUT",
+		"COMM_CLIENT_STATE_CONNECT_FAILED_DNS",
+		"COMM_CLIENT_STATE_CONNECT_FAILED_REFUSED",
+		"COMM_CLIENT_STATE_CONNECT_FAILED_NEGOTIATING_SSL",
+		"COMM_CLIENT_STATE_CONNECT_FAILED_NEGOTIATING_SECURE_TUNNEL",
+		"COMM_CLIENT_STATE_CONNECT_FAILED_AUTHENTICATING_SECURE_TUNNEL",
+		"COMM_CLIENT_STATE_CONNECT_FAILED_CONNECT_SYSCALL",
+		"COMM_CLIENT_STATE_CONNECT_FAILED_UNKNWON",
+		"COMM_CLIENT_STATE_LASTITEM",
+		NULL
+};
 /*******************************************************/
 typedef struct _CommEvTCPClientConf
 {
 	EvDNSResolverBase *resolv_base;
 	CommEvTCPClientReadMethod read_mthd;
 	CommEvTCPClientProtocol cli_proto;
+	CommEvTCPClientAddrMethod addr_mthd;
 
+	struct
+	{
+		char *ca_path_ptr;
+		char *crt_path_ptr;
+		char *key_path_ptr;
+	} ssl;
 
 	struct _EvKQBaseLogBase *log_base;
-	struct sockaddr_in src_addr;
+	struct sockaddr_storage src_addr;
 	char *hostname;
 	char *sni_hostname_str;
 	int port;
@@ -730,7 +803,7 @@ typedef struct _CommEvTCPClientConf
 
 
 } CommEvTCPClientConf;
-
+/*******************************************************/
 typedef struct _CommEvTCPClientEventPrototype
 {
 	CommEvTCPClientCBH *cb_handler_ptr;
@@ -747,18 +820,20 @@ typedef struct _CommEvTCPClientEventPrototype
 	} flags;
 
 } CommEvTCPClientEventPrototype;
-
+/*******************************************************/
 typedef struct _CommEvTCPClient
 {
 	EvBaseKQObject kq_obj;
-	EvDNSResolverBase *resolv_base;
 	CommEvTCPClientProtocol cli_proto;
 	CommEvTCPClientReadMethod read_mthd;
+	CommEvTCPClientAddrMethod addr_mthd;
+
 	CommEvStatistics statistics;
 	CommEvContentTransformerInfo transform;
 	CommEvTCPClientEventPrototype events[COMM_CLIENT_EVENT_LASTITEM];
 	CommEvTCPIOData iodata;
 	CommEvTCPSSLData ssldata;
+	EvDNSReplyHandler dnsdata;
 
 	struct _EvKQBase *kq_base;
 	struct _EvKQBaseLogBase *log_base;
@@ -774,15 +849,7 @@ typedef struct _CommEvTCPClient
 
 	int socket_fd;
 	int socket_state;
-	int dnsreq_id;
 	int cli_id_onpool;
-
-	struct
-	{
-		DNSAReply a_reply;
-		long expire_ts;
-		int cur_idx;
-	} dns;
 
 	struct
 	{
@@ -793,9 +860,10 @@ typedef struct _CommEvTCPClient
 
 	struct
 	{
-		int reconnect_after_timeout_id;
-		int reconnect_after_close_id;
-		int reconnect_on_fail_id;
+		int reconnect_id;
+//		int reconnect_after_timeout_id;
+//		int reconnect_after_close_id;
+//		int reconnect_on_fail_id;
 		int calculate_datarate_id;
 	} timers;
 
@@ -813,6 +881,13 @@ typedef struct _CommEvTCPClient
 		char hostname[1024];
 		char sni_hostname[1024];
 		int port;
+
+		struct
+		{
+			char path_ca[1024];
+			char path_crt[1024];
+			char path_key[1024];
+		} ssl;
 
 		struct
 		{
@@ -841,12 +916,12 @@ typedef struct _CommEvTCPClient
 		unsigned int ssl_enabled:1;
 		unsigned int ssl_shuting_down:1;
 		unsigned int ssl_fatal_error:1;
+		unsigned int ssl_zero_ret:1;
 		unsigned int ssl_null_cypher:1;
 		unsigned int need_dns_lookup:1;
 		unsigned int socket_eof:1;
 		unsigned int calculate_datarate:1;
 		unsigned int close_request:1;
-		unsigned int source_addr_present:1;
 		unsigned int bindany_active:1;
 		unsigned int pending_write:1;
 		unsigned int socket_in_transfer:1;
@@ -1159,6 +1234,12 @@ typedef struct _CommEvSerialPort
 /**/
 /**/
 /******************************************************************************************************/
+/* comm/core/comm_core_utils.c */
+/******************************************************************************************************/
+int CommEvUtilsFDCheckState(int socket_fd);
+void CommEvNetClientAddrInit(struct sockaddr_in *conn_addr, char *host, unsigned short port);
+
+/******************************************************************************************************/
 /* comm/core/tcp/comm_tcp_aio.c */
 /******************************************************************************************************/
 int CommEvTCPAIOWrite(struct _EvKQBase *ev_base, struct _EvKQBaseLogBase *log_base, CommEvStatistics *stats, CommEvTCPIOData *iodata, CommEvTCPIOResult *ioret, void *parent,
@@ -1241,13 +1322,16 @@ CommEvTCPClient *CommEvTCPClientNew(struct _EvKQBase *kq_base);
 CommEvTCPClient *CommEvTCPClientNewUNIX(struct _EvKQBase *kq_base);
 int CommEvTCPClientInit(struct _EvKQBase *kq_base, CommEvTCPClient *ev_tcpclient, int cli_id_onpool);
 void CommEvTCPClientDestroy(CommEvTCPClient *ev_tcpclient);
-void CommEvTCPClientClean(CommEvTCPClient *ev_tcpclient);
+void CommEvTCPClientShutdown(CommEvTCPClient *ev_tcpclient);
 int CommEvTCPClientResetConn(CommEvTCPClient *ev_tcpclient);
 int CommEvTCPClientConnect(CommEvTCPClient *ev_tcpclient, CommEvTCPClientConf *ev_tcpclient_conf);
-void CommEvTCPClientResetFD(CommEvTCPClient *ev_tcpclient);
 int CommEvTCPClientReconnect(CommEvTCPClient *ev_tcpclient);
 void CommEvTCPClientDisconnect(CommEvTCPClient *ev_tcpclient);
+void CommEvTCPClientInternalDisconnect(CommEvTCPClient *ev_tcpclient);
 int CommEvTCPClientDisconnectRequest(CommEvTCPClient *ev_tcpclient);
+void CommEvTCPClientDestroyConnReadAndWriteBuffers(CommEvTCPClient *ev_tcpclient);
+void CommEvTCPClientResetFD(CommEvTCPClient *ev_tcpclient);
+
 int CommEvTCPClientAIOWriteVectored(CommEvTCPClient *ev_tcpclient, EvAIOReqIOVectorData *vector_table, int vector_table_sz, CommEvTCPClientCBH *finish_cb, void *finish_cbdata);
 int CommEvTCPClientAIOWriteAndDestroyMemBuffer(CommEvTCPClient *ev_tcpclient, MemBuffer *mem_buf, CommEvTCPClientCBH *finish_cb, void *finish_cbdata);
 int CommEvTCPClientAIOWriteMemBuffer(CommEvTCPClient *ev_tcpclient, MemBuffer *mem_buf, CommEvTCPClientCBH *finish_cb, void *finish_cbdata);
@@ -1255,16 +1339,33 @@ int CommEvTCPClientAIOWriteStringFmt(CommEvTCPClient *ev_tcpclient, CommEvTCPCli
 int CommEvTCPClientAIOWriteString(CommEvTCPClient *ev_tcpclient, char *string, CommEvTCPClientCBH *finish_cb, void *finish_cbdata);
 int CommEvTCPClientAIOWriteAndFree(CommEvTCPClient *ev_tcpclient, char *data, unsigned long data_sz, CommEvTCPClientCBH *finish_cb, void *finish_cbdata);
 int CommEvTCPClientAIOWrite(CommEvTCPClient *ev_tcpclient, char *data, unsigned long data_sz, CommEvTCPClientCBH *finish_cb, void *finish_cbdata);
-int CommEvTCPClientSSLShutdownBegin(CommEvTCPClient *ev_tcpclient);
 int CommEvTCPClientEventIsSet(CommEvTCPClient *ev_tcpclient, CommEvTCPClientEventCodes ev_type);
 void CommEvTCPClientEventSet(CommEvTCPClient *ev_tcpclient, CommEvTCPClientEventCodes ev_type, CommEvTCPClientCBH *cb_handler, void *cb_data);
 void CommEvTCPClientEventCancel(CommEvTCPClient *ev_tcpclient, CommEvTCPClientEventCodes ev_type);
 void CommEvTCPClientEventCancelAll(CommEvTCPClient *ev_tcpclient);
 void CommEvTCPClientAddrInit(CommEvTCPClient *ev_tcpclient, char *host, unsigned short port);
 void CommEvTCPClientAddrInitUnix(CommEvTCPClient *ev_tcpclient, char *unix_path);
-int CommEvTCPClientCheckState(int socket_fd);
-EvBaseKQCBH CommEvTCPClientEventSSLNegotiate;
 
+int CommEvTCPClientReconnectSchedule(CommEvTCPClient *ev_tcpclient, int schedule_ms);
+int CommEvTCPClientRatesCalculateSchedule(CommEvTCPClient *ev_tcpclient, int schedule_ms);
+void CommEvTCPClientEventDispatchInternal(CommEvTCPClient *ev_tcpclient, int data_sz, int thrd_id, int ev_type);
+int CommEvTCPClientProcessBuffer(CommEvTCPClient *ev_tcpclient, int read_sz, int thrd_id, char *read_buf, int read_buf_sz);
+/* AIO events */
+EvBaseKQCBH CommEvTCPClientEventConnect;
+EvBaseKQCBH CommEvTCPClientEventEof;
+EvBaseKQCBH CommEvTCPClientEventRead;
+EvBaseKQCBH CommEvTCPClientEventWrite;
+
+/* SSL support */
+EvBaseKQCBH CommEvTCPClientEventSSLNegotiate;
+EvBaseKQCBH CommEvTCPClientSSLShutdown;
+EvBaseKQCBH CommEvTCPClientEventSSLRead;
+EvBaseKQCBH CommEvTCPClientEventSSLWrite;
+int CommEvTCPClientSSLShutdownBegin(CommEvTCPClient *ev_tcpclient);
+int CommEvTCPClientSSLDataInit(CommEvTCPClient *ev_tcpclient);
+int CommEvTCPClientSSLDataClean(CommEvTCPClient *ev_tcpclient);
+int CommEvTCPClientSSLDataReset(CommEvTCPClient *ev_tcpclient);
+int CommEvTCPClientSSLPeerVerify(CommEvTCPClient *ev_tcpclient);
 /******************************************************************************************************/
 /* comm_tcp_client_pool.c */
 /******************************************************************************************************/
@@ -1310,9 +1411,8 @@ X509 *CommEvSSLUtils_X509ForgeAndSignFromParams(X509 *ca_cert, EVP_PKEY *cakey, 
 StringArray *CommEvSSLUtils_X509AltNamesToStringArray(X509 *cert);
 X509 *CommEvSSLUtils_X509ForgeAndSignFromOrigCert(X509 *ca_cert, EVP_PKEY *cakey, X509 *origcrt, const char *dnsname_str, EVP_PKEY *key, long valid_sec);
 int CommEvSSLUtils_X509CertSign(X509 *target_cert, EVP_PKEY *cakey);
-int CommEvSSLUtils_GenerateRSAToServer(CommEvTCPServer *srv_ptr, const int keysize);
+
 void CommEvSSLUtils_X509CertRefCountInc(X509 *crt, int thread_safe);
-void CommEvSSLUtils_X509PrivateKeyRefCountInc(EVP_PKEY *key, int thread_safe);
 int CommEvSSLUtils_X509CopyRandom(X509 *dstcrt, X509 *srccrt);
 int CommEvSSLUtils_X509V3ExtAdd(X509V3_CTX *ctx, X509 *crt, char *k, char *v);
 int CommEvSSLUtils_X509V3ExtCopyByNID(X509 *crt, X509 *origcrt, int nid);
@@ -1325,12 +1425,6 @@ void CommEvSSLUtils_X509CertToPEM(X509 *crt, char *ret_buf, int ret_buf_maxsz);
 X509 *CommEvSSLUtils_X509CertFromFile(const char *filename);
 int CommEvSSLUtils_X509CertToFile(const char *filename, X509 *cert);
 
-/* Private key conversion functions */
-EVP_PKEY *CommEvSSLUtils_X509PrivateKeyFromPEM(char *pem_str, int pem_strsz);
-void CommEvSSLUtils_X509PrivateKeyToPEM(EVP_PKEY *key, char *ret_buf, int ret_buf_maxsz);
-int CommEvSSLUtils_X509PrivateKeyWriteToFile(const char *filename, EVP_PKEY *key);
-EVP_PKEY *CommEvSSLUtils_X509PrivateKeyReadFromFile(const char *filename);
-
 /* Public key conversion functions */
 EVP_PKEY *CommEvSSLUtils_X509PublicKeyFromPEM(char *pem_str, int pem_strsz);
 void CommEvSSLUtils_X509PublicKeyToPEM(EVP_PKEY *key, char *ret_buf, int ret_buf_maxsz);
@@ -1340,8 +1434,24 @@ EVP_PKEY *CommEvSSLUtils_X509PublicKeyReadFromFile(const char *filename);
 void CommEvSSLUtils_GenerateRSA(EVP_PKEY **dst_pkey, RSA **dst_rsa, const int keysize);
 int CommEvSSLUtils_X509CertRootNew(CommEvSSLUtilsCertReq *cert_req);
 int CommEvSSLUtils_GenerateWildCardFromDomain(char *src_domain, char *dst_tld_buf, int dst_tld_maxsz);
+unsigned char *CommEvSSLUtils_RSASHA1Sign(const char *data_ptr, size_t data_len, EVP_PKEY *private_key, unsigned int *sign_len);
 int CommEvSSLUtils_SNIParse(const unsigned char *buf, int *sz, char *ret_buf, int retbuf_maxsz);
+/******************************************************************************************************/
+/* Private key functions */
+void CommEvSSLUtils_X509PrivateKeyRefCountInc(EVP_PKEY *key, int thread_safe);
+int CommEvSSLUtils_X509PrivateKeyCheck(X509 *cert_x509, EVP_PKEY *cert_key);
+EVP_PKEY *CommEvSSLUtils_X509PrivateKeyFromMB(MemBuffer *file_mb);
+EVP_PKEY *CommEvSSLUtils_X509PrivateKeyFromPEM(char *pem_str, int pem_strsz);
+int CommEvSSLUtils_GenerateRSAToServer(CommEvTCPServer *srv_ptr, const int keysize);
+void CommEvSSLUtils_X509PrivateKeyToPEM(EVP_PKEY *key, char *ret_buf, int ret_buf_maxsz);
+int CommEvSSLUtils_X509PrivateKeyWriteToFile(const char *filename, EVP_PKEY *key);
+EVP_PKEY *CommEvSSLUtils_X509PrivateKeyReadFromFile(const char *filename);
 
+
+EVP_PKEY *CommEvSSLUtils_X509PrivateKeyReadCreate(const char *path_ptr, int ptype);
+EVP_PKEY *CommEvSSLUtils_X509PrivateKeyCreate(int type);
+EVP_PKEY *CommEvSSLUtils_X509PrivateKeyCreateRSA(int kbits);
+EVP_PKEY *CommEvSSLUtils_X509PrivateKeyCreateEC(int knid);
 /******************************************************************************************************/
 /* comm_statistics.c */
 /******************************************************************************************************/
@@ -1351,6 +1461,8 @@ char *CommEvStatisticsRateHumanize(long rate, char *buf_ptr, int buf_maxsz);
 char *CommEvStatisticsRatePPSHumanize(long rate, char *buf_ptr, int buf_maxsz);
 char *CommEvStatisticsPacketsHumanize(long total_packets, char *buf_ptr, int buf_maxsz);
 char *CommEvStatisticsUptimeHumanize(long total_sec, char *buf_ptr, int buf_maxsz);
+void CommEvStatisticsClean(CommEvStatistics *statistics);
+void CommEvStatisticsRateClean(CommEvStatistics *statistics);
 /******************************************************************************************************/
 /* comm_desc_token.c */
 /******************************************************************************************************/

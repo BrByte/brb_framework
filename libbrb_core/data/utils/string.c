@@ -51,53 +51,23 @@ SafeString *SafeStringNew(LibDataThreadSafeType str_type, int grow_rate)
 /**************************************************************************************************************************/
 int SafeStringClean(SafeString *str_ptr)
 {
-	MemBuffer *mb_ptr;
-
-	/* Sanity check */
-	if (!str_ptr)
-		return 0;
-
-	/* Cast mem_buf */
-	mb_ptr = (MemBuffer*)str_ptr;
-
-	MemBufferClean(mb_ptr);
-
-	return 0;
+	return MemBufferClean((MemBuffer*)str_ptr);
 }
 /**************************************************************************************************************************/
 int SafeStringGetSize(SafeString *str_ptr)
 {
-	return MemBufferGetSize((SafeString*)str_ptr);
+	return MemBufferGetSize((MemBuffer*)str_ptr);
 }
 /**************************************************************************************************************************/
-void SafeStringDestroy(SafeString *str_ptr)
+int SafeStringDestroy(SafeString *str_ptr)
 {
-	MemBuffer *mb_ptr;
-
-	/* Sanity check */
-	if (!str_ptr)
-		return;
-
-	/* Cast mem_buf */
-	mb_ptr = (MemBuffer*)str_ptr;
-
-	MemBufferDestroy(mb_ptr);
-
-	return;
+	return MemBufferDestroy((MemBuffer*)str_ptr);
 }
 /**************************************************************************************************************************/
 int SafeStringAdd(SafeString *str_ptr, char *data, int data_sz)
 {
-	MemBuffer *mb_ptr;
-	int new_size = 0;
-
-	/* Cast mem_buf */
-	mb_ptr = (MemBuffer*)str_ptr;
-
 	/* Add it to mem_buf */
-	new_size = MemBufferAdd(mb_ptr, data, data_sz);
-
-	return new_size;
+	return MemBufferAdd((MemBuffer*)str_ptr, data, data_sz);
 }
 /**************************************************************************************************************************/
 SafeString *SafeStringInitFmt(LibDataThreadSafeType str_type, char *data, ...)
@@ -160,7 +130,7 @@ SafeString *SafeStringInit(LibDataThreadSafeType str_type, char *data)
 	for (data_sz = 0; ( (data[data_sz] != '\0') && (data_sz < STRING_MAX_SIZE) ); data_sz++);
 
 	/* Create a new string object */
-	string = SafeStringNew(str_type, data_sz);
+	string 		= SafeStringNew(str_type, data_sz);
 
 	/* Add it to string object */
 	SafeStringAdd(string, data, data_sz);
@@ -188,17 +158,16 @@ int SafeStringAppend(SafeString *str_ptr, char *data)
 	for (data_sz = 0; ( (data[data_sz] != '\0') && (data_sz < STRING_MAX_SIZE) ); data_sz++);
 
 	/* String add will return new string size */
-	new_size = SafeStringAdd(str_ptr, data, data_sz);
+	new_size 		= SafeStringAdd(str_ptr, data, data_sz);
 
 	return new_size;
-
 }
 /**************************************************************************************************************************/
 SafeString *SafeStringDup(SafeString *str_ptr)
 {
 	SafeString *new_str;
 
-	new_str = (SafeString*)MemBufferDup((SafeString*)str_ptr);
+	new_str 		= (SafeString*)MemBufferDup((SafeString*)str_ptr);
 
 	return new_str;
 }
@@ -253,21 +222,17 @@ int SafeStringPrintf(SafeString *str_ptr, char *message, ...)
 /**************************************************************************************************************************/
 SafeString *SafeStringReplaceSubStrDup(SafeString *str_ptr, char *sub_str, char *new_sub_str, int elem_count)
 {
-	SafeString *new_str		= NULL;
-
+	SafeString *new_str	= NULL;
 	char *base_ptr		= NULL;
 	char *lastpos_ptr	= NULL;
-
 	int sub_str_sz		= 0;
 	int new_sub_str_sz	= 0;
 	int sub_str_count	= 0;
 	int remaining		= 0;
 	int replace_count	= 0;
 
-	int i;
-
 	/* Get pointer to data */
-	base_ptr = SafeStringDeref(str_ptr);
+	base_ptr 		= SafeStringDeref(str_ptr);
 
 	/* Get sub_string size */
 	for (sub_str_sz = 0; ( (sub_str[sub_str_sz] != '\0') && (sub_str_sz < STRING_MAX_SIZE) ); sub_str_sz++);
@@ -276,7 +241,7 @@ SafeString *SafeStringReplaceSubStrDup(SafeString *str_ptr, char *sub_str, char 
 	for (new_sub_str_sz = 0; ( (new_sub_str[new_sub_str_sz] != '\0') && (new_sub_str_sz < STRING_MAX_SIZE) ); new_sub_str_sz++);
 
 	/* Create new string to return */
-	new_str = SafeStringNew(str_ptr->mb_type, str_ptr->capacity);
+	new_str 		= SafeStringNew(str_ptr->mb_type, str_ptr->capacity);
 
 	/* Replace all substrings if elem_count = 0, otherwise, replace elem_count substrings */
 	do
@@ -287,7 +252,7 @@ SafeString *SafeStringReplaceSubStrDup(SafeString *str_ptr, char *sub_str, char 
 		/* Found */
 		if (lastpos_ptr)
 		{
-			//	printf("token found at ptr %p\n", lastpos_ptr);
+//			printf("token found at PTR %p\n", lastpos_ptr);
 
 			/* Add from base to token */
 			SafeStringAdd(new_str, base_ptr, (lastpos_ptr - base_ptr));
@@ -295,19 +260,17 @@ SafeString *SafeStringReplaceSubStrDup(SafeString *str_ptr, char *sub_str, char 
 			/* Add new token */
 			SafeStringAdd(new_str, new_sub_str, new_sub_str_sz);
 
-			/* Decrement elem count */
+			/* Decrement elements count */
 			elem_count--;
 		}
 		/* Not found */
 		else
 		{
-
 			/* Get remaining size */
 			for (remaining = 0; ( (base_ptr[remaining] != '\0') && (remaining < STRING_MAX_SIZE) ); remaining++);
 
-			/* Add remainig data */
+			/* Add remaining data */
 			SafeStringAdd(new_str, base_ptr, remaining);
-
 			break;
 		}
 
@@ -317,16 +280,31 @@ SafeString *SafeStringReplaceSubStrDup(SafeString *str_ptr, char *sub_str, char 
 	} while (base_ptr && elem_count);
 
 
-	/* If any elem has been found, add remaining bytes */
+	/* If any element has been found, add remaining bytes */
 	if (lastpos_ptr)
 	{
 		/* Get remaining size */
 		for (remaining = 0; ( (base_ptr[remaining] != '\0') && (remaining < STRING_MAX_SIZE) ); remaining++);
 
-		/* Add remainig data */
+		/* Add remaining data */
 		SafeStringAdd(new_str, base_ptr, remaining);
 	}
 
 	return new_str;
+}
+/**************************************************************************************************************************/
+SafeString *SafeStringReplaceSubStrDel(SafeString *str_safestr, char *from_str, char *to_str)
+{
+	SafeString *replaced_safestr;
+
+	if (!str_safestr)
+		return NULL;
+
+	replaced_safestr 	= SafeStringReplaceSubStrDup(str_safestr, from_str, to_str ? to_str : from_str, 0);
+
+	/* Destroy SafeStr */
+	SafeStringDestroy(str_safestr);
+
+	return replaced_safestr;
 }
 /**************************************************************************************************************************/

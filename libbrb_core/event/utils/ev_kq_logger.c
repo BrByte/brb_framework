@@ -32,7 +32,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "../include/libbrb_ev_kq.h"
+#include "../include/libbrb_core.h"
 
 static EvKQBaseLogMemEntry *EvKQBaseLogBaseMemLogAdd(EvKQBaseLogBase *log_base, char *color_str, char *line_str, int line_sz);
 static int EvKQBaseLogBaseMemLogDelete(EvKQBaseLogBase *log_base, EvKQBaseLogMemEntry *log_entry);
@@ -101,9 +101,9 @@ EvKQBaseLogBase *EvKQBaseLogBaseNew(EvKQBase *ev_base, EvKQBaseLogBaseConf *log_
 		}
 
 		#ifdef IS_LINUX
-			EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_fileno, COMM_EV_FILEMON, COMM_ACTION_ADD_PERSIST, EvKQBaseLogBaseFileMonCB, log_base);
+			EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_fileno, COMM_EV_FILEMON, COMM_ACTION_ADD_VOLATILE, EvKQBaseLogBaseFileMonCB, log_base);
 		#else
-			EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_file, COMM_EV_FILEMON, COMM_ACTION_ADD_PERSIST, EvKQBaseLogBaseFileMonCB, log_base);
+			EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_file, COMM_EV_FILEMON, COMM_ACTION_ADD_VOLATILE, EvKQBaseLogBaseFileMonCB, log_base);
 		#endif
 	}
 	/* Will write just to STDERR */
@@ -133,9 +133,9 @@ static int EvKQBaseLogBaseFileMonCB(int fd, int action, int thrd_id, void *cb_da
 	}
 
 #ifdef IS_LINUX
-	EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_fileno, COMM_EV_FILEMON, COMM_ACTION_ADD_PERSIST, EvKQBaseLogBaseFileMonCB, log_base);
+	EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_fileno, COMM_EV_FILEMON, COMM_ACTION_ADD_VOLATILE, EvKQBaseLogBaseFileMonCB, log_base);
 #else
-	EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_file, COMM_EV_FILEMON, COMM_ACTION_ADD_PERSIST, EvKQBaseLogBaseFileMonCB, log_base);
+	EvKQBaseSetEvent(log_base->ev_base, log_base->fileout->_file, COMM_EV_FILEMON, COMM_ACTION_ADD_VOLATILE, EvKQBaseLogBaseFileMonCB, log_base);
 #endif
 
     return 1;
@@ -305,10 +305,72 @@ void EvKQBaseLoggerHexDump(EvKQBaseLogBase *log_base, int type, char *data, int 
 		MUTEX_UNLOCK(log_base->mutex, "LOG_BASE");
 
 	return;
-
 }
 /**************************************************************************************************************************/
-char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const char *file, const char *func, const int line, const char *message, ...)
+int EvKQBaseLogSubIsEnabled(EvKQBaseLogSub *log_sub, int type)
+{
+	/* Sanity check */
+	if (!log_sub || !log_sub->log_base)
+		return 0;
+
+	/* DEBUG log and DEBUG is explicitly DISABLED */
+	if (LOGTYPE_DEBUG == type)
+		return !log_sub->flags.debug_disable;
+
+	/* This LOG_LEVEL do not trigger our LOG CONF, leave */
+	if (log_sub->log_level > type)
+		return 0;
+
+	return 1;
+}
+/**************************************************************************************************************************/
+int EvKQBaseLogSubApply(EvKQBaseLogSub *log_sub, EvKQBaseLogSub *log_cfg)
+{
+	/* Sanity check */
+	if (!log_cfg || !log_sub)
+		return -1;
+
+	if (log_cfg->log_base)
+		log_sub->log_base 				= log_cfg->log_base;
+
+	if (log_cfg->log_level > LOGTYPE_UNINIT)
+		log_sub->log_level 				= log_cfg->log_level;
+
+	if (log_cfg->flags.debug_disable)
+		log_sub->flags.debug_disable 	= log_cfg->flags.debug_disable;
+
+	return 0;
+}
+/**************************************************************************************************************************/
+char *EvKQBaseLoggerSub(EvKQBaseLogSub *log_sub, EvKQBaseLogTypeCodes type, int color, const char *file, const char *func, const int line, const char *message, ...)
+{
+	/* Sanity check */
+	if (!log_sub || !log_sub->log_base)
+		return NULL;
+
+	/* DEBUG log and DEBUG is explicitly DISABLED */
+	if (LOGTYPE_DEBUG == type)
+	{
+		if (log_sub->flags.debug_disable)
+			return NULL;
+	}
+	/* This LOG_LEVEL do not trigger our LOG CONF, leave */
+	else if (log_sub->log_level > type)
+		return NULL;
+
+	/* Process arguments */
+    va_list args;
+    va_start(args, message);
+
+    /* Call EvKQBaseLoggerAdd */
+    char *result 				= EvKQBaseLoggerAdd(log_sub->log_base, 1, type, color, file, func, line, message, args);
+
+    va_end(args);
+
+	return result;
+}
+/**************************************************************************************************************************/
+char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int force, EvKQBaseLogTypeCodes type, int color, const char *file, const char *func, const int line, const char *message, ...)
 {
 	/* Sanity check */
 	if (!log_base)
@@ -318,15 +380,17 @@ char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const ch
 	if (type >= LOGTYPE_LASTITEM)
 		return NULL;
 
-	/* We are not keeping MEM LOGs, so if conditions are not met, leave now */
-	if (!log_base->flags.mem_keep_logs)
+	/* Force log */
+	if (!force)
 	{
-		/* This LOG_LEVEL do not trigger our LOG CONF, leave */
-		if (log_base->log_level > type)
-			return NULL;
-
 		/* DEBUG log and DEBUG is explicitly DISABLED */
-		if ((log_base->flags.debug_disable) && (LOGTYPE_DEBUG == type))
+		if (LOGTYPE_DEBUG == type)
+		{
+			if (log_base->flags.debug_disable)
+				return NULL;
+		}
+		/* This LOG_LEVEL do not trigger our LOG CONF, leave */
+		else if (log_base->log_level > type)
 			return NULL;
 	}
 
@@ -358,16 +422,7 @@ char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const ch
 	int lastmsg_offset					= 0;
 	int offset							= 0;
 	int msg_malloc						= 0;
-	int do_write						= 1;
 	int alloc_sz						= MEMBUFFER_MAX_PRINTF;
-
-	/* LOG_TYPE is LOWER than LOG_LEVEL */
-	if (log_base->log_level > type)
-		do_write = 0;
-
-	/* DEBUG log and DEBUG is explicitly DISABLED */
-	if ((log_base->flags.debug_disable) && (LOGTYPE_DEBUG == type))
-		do_write = 0;
 
 	/* Detach LOG_BASE from EV_BASE to avoid recursively looping on functions that use LogAdd */
 	ev_base->log_base = NULL;
@@ -386,7 +441,9 @@ char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const ch
 		tm		= localtime_r((const time_t*)&ev_base->stats.cur_invoke_ts_sec, &tm_tmp);
 
 	/* Generate TIME string */
-	time_offset = strftime(time_buf, (sizeof(time_buf) - 1), "%H:%M:%S.", tm);
+//	time_offset = strftime(time_buf, (sizeof(time_buf) - 1), "%Y-%m-%d %H:%M:%S.", tm);
+	time_offset = snprintf((char *)&time_buf, sizeof(time_buf) - 1, "%04d-%02d-%02d %02d:%02d:%02d.",
+			tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
 
 	if (log_base->flags.thread_safe)
 	{
@@ -415,7 +472,7 @@ char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const ch
 
 	/* Create main MSG */
 	va_start(args, message);
-	msg_len = vsnprintf(NULL, 0, message, args);
+	msg_len 		= vsnprintf(NULL, 0, message, args);
 	va_end(args);
 
 	/* Too big to fit on local stack, use heap */
@@ -437,7 +494,7 @@ char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const ch
 	va_end(args);
 
 	/* AutoHash is not disabled, do it - Just hash what will be written */
-	if ((!log_base->flags.autohash_disable) && do_write)
+	if (!log_base->flags.autohash_disable)
 	{
 		/* Calculate LASTMSG hash */
 		hashstr_ptr	 = (buf_ptr + strlen(time_buf_ptr) + 1);
@@ -467,11 +524,11 @@ char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const ch
 				lastmsg_buf_ptr[lastmsg_offset] = '\0';
 
 				/* Write to log base */
-				if ((!log_base->flags.mem_only_logs) && (do_write))
+				if (!log_base->flags.mem_only_logs)
 					EvKQBaseLogBaseDoWrite(log_base, COLOR_FOREGROUND_LIGHTGREEN, lastmsg_buf_ptr, lastmsg_offset);
 
 				/* Upper layers turned ON in-memory logs - If we are running from inside a handler or crashing, do not do it, lists are probably broken */
-				if ((log_base->flags.mem_keep_logs) && (!log_base->ev_base->flags.crashing_with_sig))
+				else if (!log_base->ev_base->flags.crashing_with_sig)
 					EvKQBaseLogBaseMemLogAdd(log_base, COLOR_FOREGROUND_LIGHTGREEN, lastmsg_buf_ptr, lastmsg_offset);
 
 				/* Cancel LASTMSG timer */
@@ -492,11 +549,11 @@ char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const ch
 	memcpy(&log_base->lastmsg.tv, cur_tv, sizeof(struct timeval));
 
 	/* Write to log base */
-	if ((!log_base->flags.mem_only_logs) && (do_write))
+	if (!log_base->flags.mem_only_logs)
 		EvKQBaseLogBaseDoWrite(log_base, color_str, buf_ptr, offset);
 
 	/* Upper layers turned ON in-memory logs - If we are running from inside a handler or crashing, do not do it, lists are probably broken */
-	if ((log_base->flags.mem_keep_logs) && (!log_base->ev_base->flags.crashing_with_sig))
+	else if (!log_base->ev_base->flags.crashing_with_sig)
 		EvKQBaseLogBaseMemLogAdd(log_base, color_str, buf_ptr, offset);
 
 	/* Re-link LOG_BASE */
@@ -512,7 +569,6 @@ char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const ch
 		MUTEX_UNLOCK(log_base->mutex, "LOG_BASE");
 
 	return buf_ptr;
-
 }
 /**************************************************************************************************************************/
 int EvKQBaseLoggerMemDumpOnCrash(EvKQBaseLogBase *log_base)

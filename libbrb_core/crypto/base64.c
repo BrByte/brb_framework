@@ -128,6 +128,56 @@ int brb_base64_decode_bin(char *in_ptr, char *out_ptr, int out_sz)
 	return j;
 }
 /**************************************************************************************************************************/
+int brb_base64_decode_to_mb(char *in_ptr, MemBuffer *file_mb)
+{
+	char data_buf[8];
+	int j;
+	int c;
+	long val;
+
+	if (!in_ptr || !file_mb)
+		return -1;
+
+	if (!brb_base64_initialized)
+		brb_base64_init();
+
+	val = c = 0;
+
+	for (j = 0; *in_ptr; in_ptr++)
+	{
+		unsigned int k = ((unsigned char) *in_ptr) % BRB_BASE64_VALUE_SZ;
+
+		if (brb_base64_value[k] < 0)
+			continue;
+
+		val <<= 6;
+		val += brb_base64_value[k];
+
+		if (++c < 4)
+			continue;
+
+		/* One quantum of four encoding characters/24 bit */
+
+		data_buf[0] = val >> 16;
+		data_buf[1] = (val >> 8) & 0xff;
+		data_buf[2] = val & 0xff;
+		MemBufferAdd(file_mb, &data_buf, 3);
+
+//		out_ptr[j++] = val >> 16;			/* High 8 bits */
+//		out_ptr[j++] = (val >> 8) & 0xff;	/* Mid 8 bits */
+//		out_ptr[j++] = val & 0xff;			/* Low 8 bits */
+		val = c = 0;
+
+		continue;
+	}
+
+//	/* We are working with binary, skip out leading pad '=' */
+//	while(j > 0 && out_ptr[j] == '\0')
+//		j--;
+
+	return j;
+}
+/**************************************************************************************************************************/
 const char *brb_base64_encode(const char *decoded_str)
 {
 	static char result[BRB_BASE64_RESULT_SZ];
@@ -189,6 +239,13 @@ const char *brb_base64_encode(const char *decoded_str)
 const char *brb_base64_encode_bin(const char *data, int len)
 {
 	static char result[BRB_BASE64_RESULT_SZ];
+
+//	brb_base64_encode_bin_into(data, len, &result, sizeof(result));
+//
+//	/* Very bad practice */
+//	return &result;
+
+
 	int bits = 0;
 	int char_count = 0;
 	int out_cnt = 0;
@@ -244,6 +301,62 @@ const char *brb_base64_encode_bin(const char *data, int len)
 	return result;
 }
 /**************************************************************************************************************************/
+const char *brb_base64_encode_to_mb(const char *data, int len, MemBuffer *out_mb)
+{
+	int bits = 0;
+	int char_count = 0;
+
+	if (!data)
+		return data;
+
+	if (!brb_base64_initialized)
+		brb_base64_init();
+
+	while (len--)
+	{
+		int c = (unsigned char) *data++;
+		bits += c;
+		char_count++;
+
+		if (char_count == 3)
+		{
+			MemBufferAdd(out_mb, brb_base64_code + (bits >> 18), 1);
+			MemBufferAdd(out_mb, brb_base64_code + ((bits >> 12) & 0x3f), 1);
+			MemBufferAdd(out_mb, brb_base64_code + ((bits >> 6) & 0x3f), 1);
+			MemBufferAdd(out_mb, brb_base64_code + (bits & 0x3f), 1);
+			bits 		= 0;
+			char_count 	= 0;
+		}
+		else
+		{
+			bits <<= 8;
+		}
+		continue;
+	}
+
+	if (char_count != 0)
+	{
+		bits <<= 16 - (8 * char_count);
+		MemBufferAdd(out_mb, brb_base64_code + (bits >> 18), 1);
+		MemBufferAdd(out_mb, brb_base64_code + ((bits >> 12) & 0x3f), 1);
+
+		if (char_count == 1)
+		{
+			MemBufferAdd(out_mb, "=", 1);
+			MemBufferAdd(out_mb, "=", 1);
+		}
+		else
+		{
+			MemBufferAdd(out_mb, brb_base64_code + ((bits >> 6) & 0x3f), 1);
+			MemBufferAdd(out_mb, "=", 1);
+		}
+	}
+
+	MemBufferPutNULLTerminator(out_mb);
+
+	return MemBufferDeref(out_mb);
+}
+/**************************************************************************************************************************/
 /**/
 /**/
 /**************************************************************************************************************************/
@@ -263,3 +376,63 @@ static void brb_base64_init(void)
 	return;
 }
 /**************************************************************************************************************************/
+int brb_base64_encode_bin_into(const char *data, int len, char *result, int result_sz)
+{
+	int bits		= 0;
+	int char_count	= 0;
+	int out_cnt		= 0;
+
+	if (!data)
+		return 0;
+
+	if (!brb_base64_initialized)
+		brb_base64_init();
+
+	while ( (len-- && out_cnt) < (result_sz - 5) )
+	{
+		int c = (unsigned char) *data++;
+		bits += c;
+		char_count++;
+
+		if (char_count == 3)
+		{
+			result[out_cnt++] = brb_base64_code[bits >> 18];
+			result[out_cnt++] = brb_base64_code[(bits >> 12) & 0x3f];
+			result[out_cnt++] = brb_base64_code[(bits >> 6) & 0x3f];
+			result[out_cnt++] = brb_base64_code[bits & 0x3f];
+			bits = 0;
+			char_count = 0;
+		}
+		else
+		{
+			bits <<= 8;
+		}
+
+		continue;
+	}
+
+	if (char_count != 0)
+	{
+		bits <<= 16 - (8 * char_count);
+		result[out_cnt++] = brb_base64_code[bits >> 18];
+		result[out_cnt++] = brb_base64_code[(bits >> 12) & 0x3f];
+
+		if (char_count == 1)
+		{
+			result[out_cnt++] = '=';
+			result[out_cnt++] = '=';
+		}
+		else
+		{
+			result[out_cnt++] = brb_base64_code[(bits >> 6) & 0x3f];
+			result[out_cnt++] = '=';
+		}
+	}
+
+	result[out_cnt] = '\0';	/* terminate */
+	return out_cnt;
+}
+/**************************************************************************************************************************/
+
+
+

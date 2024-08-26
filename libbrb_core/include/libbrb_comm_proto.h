@@ -282,6 +282,7 @@ typedef struct _CommEvStatistics
 	struct timeval last_read_tv;
 	struct timeval last_write_tv;
 	struct timeval last_user_tv;
+	unsigned long last_conn_ts;
 	unsigned long last_read_ts;
 	unsigned long last_write_ts;
 	unsigned long last_user_ts;

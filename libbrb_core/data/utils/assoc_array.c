@@ -209,7 +209,7 @@ int AssocArrayDelete(AssocArray *assoc_array, char *str_key)
 	return 0;
 }
 /**************************************************************************************************************************/
-char *AssocArrayLookup(AssocArray *assoc_array, char *str_key)
+void *AssocArrayLookup(AssocArray *assoc_array, char *str_key)
 {
 	BRBHashTableItem *hash_item = NULL;
 

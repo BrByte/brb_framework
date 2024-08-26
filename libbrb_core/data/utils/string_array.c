@@ -88,6 +88,9 @@ int StringArrayPrintf(StringArray *str_arr, char *message, ...)
 		/* Set new alloc size to replace default */
 		alloc_sz	= (msg_len + 16);
 		buf_ptr		= malloc(alloc_sz);
+		if (!buf_ptr)
+			return 0;
+		memset(buf_ptr, 0, alloc_sz);
 		msg_malloc	= 1;
 	}
 
@@ -193,9 +196,6 @@ StringArray *StringArrayNew(LibDataThreadSafeType arr_type, int grow_rate)
 /**************************************************************************************************************************/
 int StringArrayDestroy(StringArray *str_arr)
 {
-	int i;
-	char *ptr;
-
 	/* Sanity checks */
 	if (!str_arr)
 		return 0;
@@ -914,6 +914,158 @@ StringArray *StringArrayExplodeStrN(char *str_ptr, char *delim, char *escape, ch
 	return arr;
 }
 /**************************************************************************************************************************/
+StringArray *StringArrayExplodeLargeStrNDelimM(char *str_ptr, char *delim, int delim_sz, char *escape, char *comment, int str_max_sz)
+{
+	StringArray *arr;
+	char *escape_buffer;
+	char *buffer_ptr;
+	char *buffer;
+	char delim_byte;
+	char escape_byte;
+	char comment_byte;
+
+	int escape_buffer_sz;
+	int delim_len;
+	int i;
+
+	int base				= 0;
+	int offset				= 0;
+	int escape_flag			= 0;
+	int found_token_flag	= 0;
+	int first_token_flag	= 0;
+
+	/* Sanity check */
+	if ( (!str_ptr) || (!delim) )
+		return 0;
+
+	/* Check escape, comment and DELIM */
+	escape_byte		= (escape ? escape[0] : 1);
+	comment_byte	= (comment ? comment[0] : 1);
+	delim_byte		= delim[0];
+
+	/* Create stack space for buffer */
+	buffer			= calloc(str_max_sz + 32, sizeof(char));
+	escape_buffer	= calloc(str_max_sz + 32, sizeof(char));
+
+	/* Create a new StringArray to be returned */
+	arr = StringArrayNew(BRBDATA_THREAD_UNSAFE, 8092);
+
+	/* Iterate TRHU all string */
+	for (i = 0; ((str_ptr[i] != '\0') && i < str_max_sz); i++)
+	{
+		/* Safety cap */
+		if (i >= str_max_sz)
+			break;
+
+		/* Token is the first char */
+		if (i == 0 && (str_ptr[0] == delim_byte) && (delim_sz <= 1 || strncmp(str_ptr + i, delim, delim_sz) == 0))
+		{
+			StringArrayAdd(arr, "");
+
+			/* Mark first token flag */
+			first_token_flag = 1;
+			found_token_flag = 1;
+			//			i++;
+
+			continue;
+		}
+
+		/* Found token */
+		if (str_ptr[i] == delim_byte && (delim_sz <= 1 || strncmp(str_ptr + i, delim, delim_sz) == 0))
+		{
+			/* This token is escaped, keep your ass moving */
+			if ( (i) && (str_ptr[i-1] == escape_byte) )
+			{
+				escape_flag = 1;
+				continue;
+			}
+
+			/* Skip DELIM char */
+			if (base || first_token_flag)
+				base++;
+
+			/* Mark found token flag */
+			found_token_flag = 1;
+			offset = (i - base);
+
+			/* Copy offset bytes from base */
+			memcpy(buffer , (str_ptr + base), offset);
+			buffer[offset] = '\0';
+
+			/* Skip commented lines */
+			if ((buffer[0] == comment_byte) )
+			{
+				/* Update base */
+				base = i;
+				continue;
+			}
+
+			/* This string part has the escape flag inside it. Remove it before inserting into array */
+			if (escape_flag)
+			{
+				/* Remove the escape from the string */
+				escape_buffer_sz = StringArrayUnescapeString(escape_buffer, buffer, escape_byte);
+				escape_buffer[escape_buffer_sz] = '\0';
+
+				/* Add it to string array */
+				StringArrayAddN(arr, escape_buffer, escape_buffer_sz);
+
+				/* Reset escape flag */
+				escape_flag = 0;
+			}
+			else
+				StringArrayAddN(arr, buffer, offset);
+
+			/* Update base */
+			base = i;
+		}
+		continue;
+	}
+
+	/* Code below is to add data after the last delimiter */
+	if (found_token_flag)
+	{
+		/* Skip DELIM char */
+		if (base || first_token_flag)
+			base++;
+
+		/* Calculate token offset */
+		offset = (i - base);
+
+		/* Copy offset bytes from base */
+		memcpy(buffer , (str_ptr + base), offset);
+		buffer[offset] = '\0';
+
+		if (escape_byte)
+		{
+			/* Remove the escape from the string */
+			escape_buffer_sz = StringArrayUnescapeString(escape_buffer, buffer, escape_byte);
+			escape_buffer[escape_buffer_sz+1] = '\0';
+		}
+
+		if (!(buffer[0] == comment_byte))
+		{
+			/* Add it to string array - Escaped */
+			if (escape_byte)
+				StringArrayAddN(arr, escape_buffer, escape_buffer_sz);
+			/* Add it to string array - Original */
+			else
+				StringArrayAddN(arr, buffer, offset);
+		}
+
+	}
+	/* No tokens found, just return it as first ELEM */
+	else
+		StringArrayAddN(arr, str_ptr, i);
+
+	free(buffer);
+	free(escape_buffer);
+
+	/* Shrink the buffer */
+	MemBufferShrink(arr->data->mem_buf);
+	return arr;
+}
+/**************************************************************************************************************************/
 StringArray *StringArrayExplodeLargeStrN(char *str_ptr, char *delim, char *escape, char *comment, int str_max_sz)
 {
 	StringArray *arr;
@@ -1225,6 +1377,63 @@ MemBuffer *StringArrayImplodeToMemBuffer(StringArray *str_arr, char *delim, char
 	MemBufferShrink(imploded_mb);
 
 	return imploded_mb;
+}
+/**************************************************************************************************************************/
+int StringArrayImplodeByPos(StringArray *str_arr, char delim, int pos, int qnt)
+{
+	int i;
+	int qnt_left;
+	int str_sz;
+	char *str_ptr;
+
+	/* Sanity checks */
+	if (!str_arr)
+		return 0;
+
+	if (str_arr->data->elements <= pos)
+		return 0;
+
+	if (qnt <= 0)
+		return 0;
+
+	qnt_left	= str_arr->data->elements - pos - 1;
+
+	/* Not enough elements */
+	if (qnt_left < qnt)
+		return -1;
+
+	/* CRITICAL SECTION - BEGIN */
+	if (str_arr->arr_type == BRBDATA_THREAD_SAFE)
+		_StringArrayEnterCritical(str_arr);
+
+	for (i = 0; i < qnt; i++)
+	{
+		str_ptr		= StringArrayGetDataByPos(str_arr, pos + i + 1);
+		str_sz		= StringArrayGetDataSizeByPos(str_arr, pos + i + 1);
+
+		/* This should not happen */
+		if (!str_ptr)
+			return -1;
+
+		*--str_ptr	= delim;
+
+		str_arr->data->offsetarr[pos] += str_sz + 1;
+	}
+
+	/* Organize indexes */
+	for (i = 0; i < qnt_left; i++)
+	{
+		str_arr->data->basearr[pos + i + 1] = str_arr->data->basearr[pos + qnt + i + 1];
+		str_arr->data->offsetarr[pos + i + 1] = str_arr->data->offsetarr[pos + qnt + i + 1];
+	}
+
+	str_arr->data->elements -= qnt;
+
+	/* CRITICAL SECTION - END */
+	if (str_arr->arr_type == BRBDATA_THREAD_SAFE)
+		_StringArrayLeaveCritical(str_arr);
+
+	return 0;
 }
 /**************************************************************************************************************************/
 char *StringArrayImplodeToStr(StringArray *str_arr, char *delim, char *escape)

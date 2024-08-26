@@ -41,7 +41,7 @@ static int EvKQBaseCrashAtomicHandler(EvKQBase *kq_base, int signal_code);
 
 /* Will be initialized by set signal */
 static EvKQBase *glob_signal_kqbase 	= NULL;
-static int glob_signal_thrd_id			= -1;
+static pthread_t glob_signal_thrd_id	= NULL;
 
 /**************************************************************************************************************************/
 /* Public event set interface

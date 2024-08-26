@@ -36,8 +36,7 @@
 
 static void DLinkedListAddUnsafe(DLinkedList *list, DLinkedListNode *node, void *data);
 static void DLinkedListDupUnsafe(DLinkedList *list, DLinkedList *ret_list);
-static void DLinkedListDupFilterUnsafe(DLinkedList *list, DLinkedList *ret_list, DLinkedListFilterNode *filter_func, char *filter_key, char *filter_value);
-static void DLinkedListSortMergeUnsafe(DLinkedList *list, DLinkedListCompareFunc *cmp_func, DLinkedListSortCodes cmp_flag);
+
 
 static DLinkedListNode *DLinkedListMergeSortFunc(DLinkedListNode *head, DLinkedListCompareFunc *cmp_func, DLinkedListSortCodes cmp_flag);
 
@@ -1086,7 +1085,7 @@ static void DLinkedListDupUnsafe(DLinkedList *list, DLinkedList *ret_list)
 	return;
 }
 /**************************************************************************************************************************/
-static void DLinkedListDupFilterUnsafe(DLinkedList *list, DLinkedList *ret_list, DLinkedListFilterNode *filter_func, char *filter_key, char *filter_value)
+void DLinkedListDupFilterUnsafe(DLinkedList *list, DLinkedList *ret_list, DLinkedListFilterNode *filter_func, char *filter_key, char *filter_value)
 {
 	DLinkedListNode *node;
 	DLinkedListNode *new_node;
@@ -1112,7 +1111,7 @@ static void DLinkedListDupFilterUnsafe(DLinkedList *list, DLinkedList *ret_list,
 	return;
 }
 /**************************************************************************************************************************/
-static void DLinkedListSortMergeUnsafe(DLinkedList *list, DLinkedListCompareFunc *cmp_func, DLinkedListSortCodes cmp_flag)
+void DLinkedListSortMergeUnsafe(DLinkedList *list, DLinkedListCompareFunc *cmp_func, DLinkedListSortCodes cmp_flag)
 {
 	DLinkedListNode *node;
 

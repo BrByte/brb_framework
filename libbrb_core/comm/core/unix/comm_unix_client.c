@@ -47,7 +47,6 @@ static EvBaseKQCBH CommEvUNIXClientRatesCalculateTimer;
 static EvBaseKQCBH CommEvUNIXClientReconnectTimer;
 static EvBaseKQCBH CommEvUNIXClientTimerConnectTimeout;
 
-static int CommEvUNIXClientCheckState(int socket_fd);
 static void CommEvUNIXClientInternalDisconnect(CommEvUNIXClient *ev_unixclient);
 static int CommEvUNIXClientAsyncConnect(CommEvUNIXClient *ev_unixclient);
 static void CommEvUNIXClientEventDispatchInternal(CommEvUNIXClient *ev_unixclient, int data_sz, int thrd_id, int ev_type);
@@ -92,7 +91,7 @@ int CommEvUNIXClientInit(EvKQBase *kq_base, CommEvUNIXClient *ev_unixclient, int
 	EvKQBaseObjectRegister(kq_base, &ev_unixclient->kq_obj);
 
 	/* Set default READ METHOD and READ PROTO, can be override by CONNECT function */
-	ev_unixclient->socket_state					= COMM_UNIX_CLIENT_STATE_DISCONNECTED;
+	ev_unixclient->socket_state					= COMM_CLIENT_STATE_DISCONNECTED;
 	ev_unixclient->socket_fd					= socket_fd;
 	ev_unixclient->cli_id_onpool				= cli_id_onpool;
 
@@ -220,7 +219,7 @@ void CommEvUNIXClientResetFD(CommEvUNIXClient *ev_unixclient)
 	if (!ev_unixclient)
 		return;
 
-	if (ev_unixclient->socket_state == COMM_UNIX_CLIENT_STATE_CONNECTED)
+	if (ev_unixclient->socket_state == COMM_CLIENT_STATE_CONNECTED)
 		return;
 
 	/* Save a copy of old socket_fd */
@@ -249,7 +248,7 @@ int CommEvUNIXClientReconnect(CommEvUNIXClient *ev_unixclient)
 	if (!ev_unixclient)
 		return 0;
 
-	if (ev_unixclient->socket_state == COMM_UNIX_CLIENT_STATE_CONNECTED)
+	if (ev_unixclient->socket_state == COMM_CLIENT_STATE_CONNECTED)
 		return 0;
 
 	/* Reset this client SOCKET_FD */
@@ -301,7 +300,7 @@ void CommEvUNIXClientDisconnect(CommEvUNIXClient *ev_unixclient)
 	EvKQBaseSocketClose(ev_unixclient->kq_base, fd);
 
 	/* Set new state */
-	ev_unixclient->socket_state	= COMM_UNIX_CLIENT_STATE_DISCONNECTED;
+	ev_unixclient->socket_state	= COMM_CLIENT_STATE_DISCONNECTED;
 	ev_unixclient->socket_fd	= -1;
 
 	return;
@@ -672,10 +671,10 @@ static int CommEvUNIXClientEventConnect(int fd, int data_sz, int thrd_id, void *
 	int pending_conn				= 0;
 
 	/* Query the kernel for the current socket state */
-	ev_unixclient->socket_state = CommEvUNIXClientCheckState(fd);
+	ev_unixclient->socket_state = CommEvUtilsFDCheckState(fd);
 
 	/* Connection not yet completed, reschedule and return */
-	if (COMM_UNIX_CLIENT_STATE_CONNECTING == ev_unixclient->socket_state)
+	if (COMM_CLIENT_STATE_CONNECTING == ev_unixclient->socket_state)
 	{
 		KQBASE_LOG_PRINTF(ev_unixclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - CONNECTING...!\n", ev_unixclient->socket_fd);
 		EvKQBaseSetEvent(ev_unixclient->kq_base, ev_unixclient->socket_fd, COMM_EV_WRITE, COMM_ACTION_ADD_VOLATILE, CommEvUNIXClientEventConnect, ev_unixclient);
@@ -683,7 +682,7 @@ static int CommEvUNIXClientEventConnect(int fd, int data_sz, int thrd_id, void *
 	}
 
 	/* If connected OK, set READ and EOF events */
-	if (COMM_UNIX_CLIENT_STATE_CONNECTED == ev_unixclient->socket_state)
+	if (COMM_CLIENT_STATE_CONNECTED == ev_unixclient->socket_state)
 	{
 
 		KQBASE_LOG_PRINTF(ev_unixclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - Connected!\n", ev_unixclient->socket_fd);
@@ -710,7 +709,7 @@ static int CommEvUNIXClientEventConnect(int fd, int data_sz, int thrd_id, void *
 	CommEvUNIXClientEventDispatchInternal(ev_unixclient, data_sz, thrd_id, COMM_UNIX_CLIENT_EVENT_CONNECT);
 
 	/* Connection has failed */
-	if (ev_unixclient->socket_state > COMM_UNIX_CLIENT_STATE_CONNECTED)
+	if (ev_unixclient->socket_state > COMM_CLIENT_STATE_CONNECTED)
 	{
 		KQBASE_LOG_PRINTF(ev_unixclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - Connection FAILED!\n", ev_unixclient->socket_fd);
 
@@ -721,7 +720,7 @@ static int CommEvUNIXClientEventConnect(int fd, int data_sz, int thrd_id, void *
 			CommEvUNIXClientDestroy(ev_unixclient);
 		}
 		/* Upper layers want a reconnect retry if CONNECTION FAILS */
-		else if ((ev_unixclient->flags.reconnect_on_fail) && (ev_unixclient->socket_state > COMM_UNIX_CLIENT_STATE_CONNECTED))
+		else if ((ev_unixclient->flags.reconnect_on_fail) && (ev_unixclient->socket_state > COMM_CLIENT_STATE_CONNECTED))
 		{
 			/* Will close socket and cancel any pending events of ev_unixclient->socket_fd, including the close event */
 			if ( ev_unixclient->socket_fd > 0)
@@ -739,7 +738,7 @@ static int CommEvUNIXClientEventConnect(int fd, int data_sz, int thrd_id, void *
 					ev_unixclient->socket_fd, ev_unixclient->timers.reconnect_on_fail_id);
 
 			/* Set flags and STATE */
-			ev_unixclient->socket_state	= COMM_UNIX_CLIENT_STATE_DISCONNECTED;
+			ev_unixclient->socket_state	= COMM_CLIENT_STATE_DISCONNECTED;
 			ev_unixclient->socket_fd	= -1;
 		}
 		else
@@ -1330,7 +1329,7 @@ static int CommEvUNIXClientTimerConnectTimeout(int fd, int timeout_type, int thr
 	KQBASE_LOG_PRINTF(ev_unixclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - Connection TIMEDOUT\n", ev_unixclient->socket_fd);
 
 	/* Set client state */
-	ev_unixclient->socket_state = COMM_UNIX_CLIENT_STATE_CONNECT_FAILED_TIMEOUT;
+	ev_unixclient->socket_state = COMM_CLIENT_STATE_CONNECT_FAILED_TIMEOUT;
 
 	/* Cancel and close any pending event associated with UNIX client FD, to avoid double notification */
 	EvKQBaseClearEvents(ev_unixclient->kq_base, ev_unixclient->socket_fd);
@@ -1348,44 +1347,6 @@ static int CommEvUNIXClientTimerConnectTimeout(int fd, int timeout_type, int thr
 /**/
 /**/
 /**************************************************************************************************************************/
-static int CommEvUNIXClientCheckState(int socket_fd)
-{
-	int op_status = -1;
-	int err = 0;
-	socklen_t errlen = sizeof(err);
-
-	op_status = getsockopt(socket_fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
-
-	if (op_status == 0)
-	{
-		switch (err)
-		{
-
-		case 0:
-		case EISCONN:
-			return COMM_UNIX_CLIENT_STATE_CONNECTED;
-
-		case EINPROGRESS:
-			/* FALL TROUGHT */
-		case EWOULDBLOCK:
-			/* FALL TROUGHT */
-		case EALREADY:
-			/* FALL TROUGHT */
-		case EINTR:
-			return COMM_UNIX_CLIENT_STATE_CONNECTING;
-
-		case ECONNREFUSED:
-			return COMM_UNIX_CLIENT_STATE_CONNECT_FAILED_REFUSED;
-
-		default:
-			break;
-
-		}
-	}
-
-	return COMM_UNIX_CLIENT_STATE_CONNECT_FAILED_UNKNWON;
-}
-/**************************************************************************************************************************/
 static void CommEvUNIXClientInternalDisconnect(CommEvUNIXClient *ev_unixclient)
 {
 	KQBASE_LOG_PRINTF(ev_unixclient->log_base, LOGTYPE_INFO, LOGCOLOR_YELLOW, "FD [%d] - Clean up\n", ev_unixclient->socket_fd);
@@ -1395,7 +1356,7 @@ static void CommEvUNIXClientInternalDisconnect(CommEvUNIXClient *ev_unixclient)
 	{
 		EvKQBaseSocketClose(ev_unixclient->kq_base, ev_unixclient->socket_fd);
 
-		ev_unixclient->socket_state	= COMM_UNIX_CLIENT_STATE_DISCONNECTED;
+		ev_unixclient->socket_state	= COMM_CLIENT_STATE_DISCONNECTED;
 		ev_unixclient->socket_fd		= -1;
 	}
 
@@ -1406,7 +1367,7 @@ static void CommEvUNIXClientInternalDisconnect(CommEvUNIXClient *ev_unixclient)
 	CommEvUNIXIODataDestroy(&ev_unixclient->iodata);
 
 	/* If client want to be reconnected automatically after a CONN_TIMEOUT, honor it */
-	if ( (COMM_UNIX_CLIENT_STATE_CONNECT_FAILED_TIMEOUT == ev_unixclient->socket_state) && ev_unixclient->flags.reconnect_on_timeout)
+	if ( (COMM_CLIENT_STATE_CONNECT_FAILED_TIMEOUT == ev_unixclient->socket_state) && ev_unixclient->flags.reconnect_on_timeout)
 	{
 		ev_unixclient->timers.reconnect_after_timeout_id = EvKQBaseTimerAdd(ev_unixclient->kq_base, COMM_ACTION_ADD_VOLATILE,
 				((ev_unixclient->retry_times.reconnect_after_timeout_ms > 0) ? ev_unixclient->retry_times.reconnect_after_timeout_ms : COMM_UNIX_CLIENT_RECONNECT_TIMEOUT_DEFAULT_MS),
@@ -1471,22 +1432,21 @@ static int CommEvUNIXClientAsyncConnect(CommEvUNIXClient *ev_unixclient)
 	EvKQBaseSetEvent(ev_unixclient->kq_base, ev_unixclient->socket_fd, COMM_EV_WRITE, COMM_ACTION_ADD_VOLATILE, CommEvUNIXClientEventConnect, ev_unixclient);
 
 	/* Set client state */
-	ev_unixclient->socket_state = COMM_UNIX_CLIENT_STATE_CONNECTING;
+	ev_unixclient->socket_state = COMM_CLIENT_STATE_CONNECTING;
 
 	/* If upper layers want CONNECT_TIMEOUT, set timeout on WRITE event on low level layer */
 	if (ev_unixclient->timeout.connect_ms > 0)
 		EvKQBaseTimeoutSet(ev_unixclient->kq_base, ev_unixclient->socket_fd, KQ_CB_TIMEOUT_WRITE, ev_unixclient->timeout.connect_ms, CommEvUNIXClientTimerConnectTimeout, ev_unixclient);
-
 
 	return 1;
 
 	/* Failed to begin connection */
 	conn_failed:
 
-	KQBASE_LOG_PRINTF(ev_unixclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - Connection failed\n", ev_unixclient->socket_fd);
+	KQBASE_LOG_PRINTF(ev_unixclient->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - Connection failed - ERR [%d]\n", ev_unixclient->socket_fd, errno);
 
 	/* Failed connecting */
-	ev_unixclient->socket_state = COMM_UNIX_CLIENT_STATE_CONNECT_FAILED_CONNECT_SYSCALL;
+	ev_unixclient->socket_state = COMM_CLIENT_STATE_CONNECT_FAILED_CONNECT_SYSCALL;
 
 	/* Dispatch the internal event */
 	CommEvUNIXClientEventDispatchInternal(ev_unixclient, 0, -1, COMM_UNIX_CLIENT_EVENT_CONNECT);
@@ -1509,7 +1469,7 @@ static int CommEvUNIXClientAsyncConnect(CommEvUNIXClient *ev_unixclient)
 		/* Destroy read and write buffers */
 		CommEvUNIXIODataDestroy(&ev_unixclient->iodata);
 
-		ev_unixclient->socket_state	= COMM_UNIX_CLIENT_STATE_DISCONNECTED;
+		ev_unixclient->socket_state	= COMM_CLIENT_STATE_DISCONNECTED;
 		ev_unixclient->socket_fd		= -1;
 
 		/* Schedule RECONNECT timer */

@@ -76,12 +76,23 @@ typedef enum
 	AIOREQ_OPCODE_WRITE,
 	AIOREQ_OPCODE_WRITE_MB,
 	AIOREQ_OPCODE_CLOSE,
-	AIOREQ_OPCODE_UNLINK,
-	AIOREQ_OPCODE_TRUNCATE,
-	AIOREQ_OPCODE_OPENDIR,
 	AIOREQ_OPCODE_STAT,
+
+	AIOREQ_OPCODE_UNLINK,
+	AIOREQ_OPCODE_REMOVE,
+	AIOREQ_OPCODE_TRUNCATE,
+
+	AIOREQ_OPCODE_RENAME,
+	AIOREQ_OPCODE_COPY,
+	AIOREQ_OPCODE_MOVE,
+
+	AIOREQ_OPCODE_TAR,
+	AIOREQ_OPCODE_UNTAR,
+
 	AIOREQ_OPCODE_MOUNT,
 	AIOREQ_OPCODE_UNMOUNT,
+
+	AIOREQ_OPCODE_CUSTOM,
 	AIOREQ_OPCODE_LASTITEM,
 } EvAIOReqCode;
 
@@ -95,9 +106,32 @@ typedef enum
 typedef void EvAIOReqCBH(int, int, int, void*, void*);
 typedef void EvAIOReqDestroyFunc(void*);
 
-static char *glob_aioreqcode_str[] = {"AIOREQ_OPCODE_NONE", "AIOREQ_OPCODE_OPEN", "AIOREQ_OPCODE_READ", "AIOREQ_OPCODE_READ_MB",
-		"AIOREQ_OPCODE_WRITE", "AIOREQ_OPCODE_WRITE_MB", "AIOREQ_OPCODE_CLOSE", "AIOREQ_OPCODE_UNLINK", "AIOREQ_OPCODE_TRUNCATE", "AIOREQ_OPCODE_OPENDIR",
-		"AIOREQ_OPCODE_STAT", "AIOREQ_OPCODE_MOUNT", "AIOREQ_OPCODE_UNMOUNT","AIOREQ_OPCODE_LASTITEM", NULL};
+static char *glob_aioreqcode_str[] = {
+		"AIOREQ_OPCODE_NONE",
+		"AIOREQ_OPCODE_OPEN",
+		"AIOREQ_OPCODE_READ",
+		"AIOREQ_OPCODE_READ_MB",
+		"AIOREQ_OPCODE_WRITE",
+		"AIOREQ_OPCODE_WRITE_MB",
+		"AIOREQ_OPCODE_CLOSE",
+		"AIOREQ_OPCODE_UNLINK",
+		"AIOREQ_OPCODE_REMOVE",
+		"AIOREQ_OPCODE_TRUNCATE",
+		"AIOREQ_OPCODE_OPENDIR",
+		"AIOREQ_OPCODE_STAT",
+
+		"AIOREQ_OPCODE_RENAME",
+		"AIOREQ_OPCODE_COPY",
+		"AIOREQ_OPCODE_MOVE",
+
+		"AIOREQ_OPCODE_TAR",
+		"AIOREQ_OPCODE_UNTAR",
+
+		"AIOREQ_OPCODE_MOUNT",
+		"AIOREQ_OPCODE_UNMOUNT",
+		"AIOREQ_OPCODE_LASTITEM",
+		NULL
+};
 
 /******************************************************************************************************/
 typedef struct _EvAIOReq
@@ -105,6 +139,7 @@ typedef struct _EvAIOReq
 	DLinkedListNode node;
 	EvAIOReqDestroyFunc *destroy_func;
 	EvAIOReqCBH *finish_cb;
+	EvAIOReqCBH *read_cb;
 	MemBuffer *transformed_mb;
 	struct _EvAIOReqQueue *parent_queue;
 	struct aiocb aiocb;
@@ -131,9 +166,21 @@ typedef struct _EvAIOReq
 
 	struct
 	{
+		struct sockaddr_storage src_addr_sa;
+		struct sockaddr_storage dst_addr_sa;
+		int src_port;
+		int dst_port;
+		int if_index;
+	} so;
+
+	struct
+	{
 		struct timeval enqueue;
 		struct timeval begin;
 		struct timeval finish;
+
+		int delta_enqueue_ms;
+		int delta_run_ms;
 	} tv;
 
 	struct
@@ -164,11 +211,13 @@ typedef struct _EvAIOReq
 		unsigned int aio_failed:1;
 		unsigned int aio_delayed_notify:1;
 		unsigned int dup_data:1;
-		unsigned int dup_path_str;
-		unsigned int dup_dev_str;
+		unsigned int dup_path_str:1;
+		unsigned int dup_dev_str:1;
 		unsigned int transformed:1;
 		unsigned int cancelled:1;
 		unsigned int destroyed:1;
+
+		unsigned int running:1;
 	} flags;
 
 } EvAIOReq;

@@ -34,18 +34,9 @@
 
 #include "../include/libbrb_core.h"
 
-/* rfc1035 - DNS */
-#define RFC1035_MAXHOSTNAMESZ 256
-#define RFC1035_MAXLABELSZ 63
-#define rfc1035_unpack_error 15
-#define RFC1035_UNPACK_DEBUG  (void)0
-
-#define RFC1035_TYPE_A 1
-#define RFC1035_TYPE_CNAME 5
-#define RFC1035_TYPE_PTR 12
-#define RFC1035_CLASS_IN 1
-
-typedef struct _rfc1035_rr {
+/**************************************************************************************************************************/
+typedef struct _rfc1035_rr
+{
 	char name[RFC1035_MAXHOSTNAMESZ];
 	unsigned short type;
 	unsigned short class;
@@ -53,35 +44,44 @@ typedef struct _rfc1035_rr {
 	unsigned short rdlength;
 	char *rdata;
 } rfc1035_rr;
-
-typedef struct _rfc1035_query {
+/**************************************************************************************************************************/
+typedef struct _rfc1035_query
+{
 	char name[RFC1035_MAXHOSTNAMESZ];
 	unsigned short qtype;
 	unsigned short qclass;
 } rfc1035_query;
+/**************************************************************************************************************************/
+typedef struct _rfc1035_message
+{
+    unsigned short id;          // 16-bit identifier for the DNS message
 
-typedef struct _rfc1035_message {
-	unsigned short id;
-	unsigned int qr:1;
-	unsigned int opcode:4;
-	unsigned int aa:1;
-	unsigned int tc:1;
-	unsigned int rd:1;
-	unsigned int ra:1;
-	unsigned int rcode:4;
-	unsigned short qdcount;
-	unsigned short ancount;
-	unsigned short nscount;
-	unsigned short arcount;
-	rfc1035_query *query;
-	rfc1035_rr *answer;
+    unsigned int qr:1;          // Query/Response flag (0 for query, 1 for response)
+    unsigned int opcode:4;      // Operation code (4 bits) indicating the type of query
+    							// Tells receiving machine the intent of the message.
+								// Generally 0 meaning normal query, however there are other valid options such as 1 for reverse query and 2 for server status.
+
+    unsigned int aa:1;          // Authoritative Answer flag (1 if response is from authoritative server)
+    unsigned int tc:1;          // Truncated flag (1 if message was truncated)
+    unsigned int rd:1;          // Recursion Desired flag (1 if client wants recursive resolution)
+    unsigned int ra:1;          // Recursion Available flag (1 if server supports recursive queries)
+    unsigned int rcode:4;       // Response code (4 bits) indicating the result of the query
+
+    unsigned short qdcount;     // Number of questions in the message
+    unsigned short ancount;     // Number of answer resource records
+    unsigned short nscount;     // Number of authority resource records
+    unsigned short arcount;     // Number of additional resource records
+
+    rfc1035_query *query;       // Pointer to the question section of the message
+    rfc1035_rr *answer;         // Pointer to the answer section of the message
 } rfc1035_message;
-
-typedef struct _rfc1035_errors {
+/**************************************************************************************************************************/
+typedef struct _rfc1035_errors
+{
 	int error_n;
 	char *string;
 } rfc1035_errors;
-
+/**************************************************************************************************************************/
 static const rfc1035_errors rfc1035_str_error_arr[] =
 {
 		{0, "No error condition"},
@@ -93,7 +93,7 @@ static const rfc1035_errors rfc1035_str_error_arr[] =
 		{15, "The DNS reply message is corrupt or could not be safely parsed."}
 
 };
-
+/**************************************************************************************************************************/
 int rfc1035_errno;
 const char *rfc1035_error_message;
 
@@ -103,7 +103,9 @@ static EvBaseKQCBH CommEvDNSPeriodicTimerEvent;
 static int CommEvDNStvSubMsec(struct timeval *t1, struct timeval *t2);
 
 static int rfc1035AnswersUnpack(const char *buf, size_t sz, rfc1035_rr **records, unsigned short *id);
+static unsigned short rfc1035BuildAllQuery(const char *hostname, char *buf, size_t *szp, unsigned short qid);
 static unsigned short rfc1035BuildAQuery(const char *hostname, char *buf, size_t *szp, unsigned short qid);
+static unsigned short rfc1035BuildAAAAQuery(const char *hostname, char *buf, size_t *szp, unsigned short qid);
 static unsigned short rfc1035BuildPTRQuery(const struct in_addr addr, char *buf, size_t *szp, unsigned short qid);
 static void rfc1035SetQueryID(char *buf, unsigned short qid);
 static int rfc1035HeaderPack(char *buf, size_t sz, rfc1035_message *hdr);
@@ -119,7 +121,6 @@ static void rfc1035RRDestroy(rfc1035_rr *rr, int n);
 static int rfc1035QueryUnpack(const char *buf, size_t sz, int *off, rfc1035_query * query);
 static void rfc1035MessageDestroy(rfc1035_message * msg);
 static int rfc1035MessageUnpack(const char *buf, size_t sz, rfc1035_message ** answer);
-
 /**************************************************************************************************************************/
 EvDNSResolverBase *CommEvDNSResolverBaseNew(EvKQBase *ev_base, EvDNSResolverConf *conf)
 {
@@ -177,6 +178,11 @@ void CommEvDNSResolverBaseDestroy(EvDNSResolverBase *resolv_base)
 /**************************************************************************************************************************/
 int CommEvDNSGetHostByName(EvDNSResolverBase *resolv_base, char *host, CommEvDNSResolverCBH *cb_handler, void *cb_data)
 {
+	return CommEvDNSGetHostByNameX(resolv_base, host, cb_handler, cb_data, 0);
+}
+/**************************************************************************************************************************/
+int CommEvDNSGetHostByNameX(EvDNSResolverBase *resolv_base, char *host, CommEvDNSResolverCBH *cb_handler, void *cb_data, int query_x)
+{
 	struct timeval *current_time_ptr;
 	struct timeval current_time;
 	int slot_id;
@@ -226,14 +232,17 @@ int CommEvDNSGetHostByName(EvDNSResolverBase *resolv_base, char *host, CommEvDNS
 	else
 		current_time_ptr 				= &resolv_base->ev_base->stats.cur_invoke_tv;
 
-	KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "SLOT_ID [%d] - Will resolve [%s]\n", slot_id, host);
+	KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "SLOT_ID [%d] - Will resolve [%s]\n", slot_id, host);
 
 	/* Save sent time */
 	memcpy(&pending_query->transmit_tv, current_time_ptr, sizeof(struct timeval));
 	memcpy(&pending_query->retransmit_tv, current_time_ptr, sizeof(struct timeval));
 
 	/* Build 1035 packet */
-	rfc1035BuildAQuery(host, (char*)&pending_query->rfc1035_request, (size_t*)&pending_query->rfc1035_request_sz, pending_query->slot_id);
+	if (query_x > 0)
+		rfc1035BuildAAAAQuery(host, (char*)&pending_query->rfc1035_request, (size_t*)&pending_query->rfc1035_request_sz, pending_query->slot_id);
+	else
+		rfc1035BuildAQuery(host, (char*)&pending_query->rfc1035_request, (size_t*)&pending_query->rfc1035_request_sz, pending_query->slot_id);
 
 	/* Enqueue for writing */
 	DLinkedListAddTail(&resolv_base->pending_req.req_list, &pending_query->node, pending_query);
@@ -263,6 +272,89 @@ int CommEvDNSGetHostByName(EvDNSResolverBase *resolv_base, char *host, CommEvDNS
 	return slot_id;
 }
 /**************************************************************************************************************************/
+int CommEvDNSCheckIfNeedDNSLookup(char *host_ptr)
+{
+    int dots_found;
+    int colons_found;
+    int state;
+    int i;
+
+    enum
+    {
+        HOSTNAME_IS_IP,
+        HOSTNAME_IS_FQDN,
+        HOSTNAME_IS_IPV6,
+    };
+
+    /* Check if request URL is FQDN, IPv4 or IPv6 */
+    for (i = 0, dots_found = 0, colons_found = 0, state = HOSTNAME_IS_IP; host_ptr[i] != '\0'; i++)
+    {
+        /* Seen a dot on domain (for IPv4 or FQDN) */
+        if ('.' == host_ptr[i])
+            dots_found++;
+
+        /* Seen a colon (for IPv6) */
+        if (':' == host_ptr[i])
+        {
+            colons_found++;
+            state = HOSTNAME_IS_IPV6;
+        }
+
+        /* If both dots and colons are found, it's neither IPv4 nor IPv6, set as FQDN */
+        if (dots_found > 0 && colons_found > 0)
+        {
+            state = HOSTNAME_IS_FQDN;
+            break;
+        }
+
+        /* An IPv4 can not have more than three dot chars, set as FQDN and stop */
+        if (dots_found > 3)
+        {
+            state = HOSTNAME_IS_FQDN;
+            break;
+        }
+
+        /* An IPv6 can have at most seven colons */
+        if (colons_found > 7)
+        {
+            state = HOSTNAME_IS_FQDN;
+            break;
+        }
+
+        /* Not a valid character for IP addresses, set to FQDN and bail out */
+        if ((!isdigit(host_ptr[i])) && (host_ptr[i] != '.') && (host_ptr[i] != ':') &&
+            (!isxdigit(host_ptr[i]))) /* isxdigit checks for valid hex characters for IPv6 */
+        {
+            state = HOSTNAME_IS_FQDN;
+            break;
+        }
+    }
+
+    /* Set flags and return */
+    if (HOSTNAME_IS_FQDN == state)
+        return 1;
+
+    /* If it's an IPv6 address, handle accordingly */
+    if (HOSTNAME_IS_IPV6 == state)
+        return 0;
+
+    /* It's an IPv4 address */
+    return 0;
+}
+/**************************************************************************************************************************/
+int CommEvDNSDataCancelAndClean(EvDNSReplyHandler *dnsdata)
+{
+	/* Cancel pending DNS request */
+	if (dnsdata->req_id	> -1)
+	{
+		/* Cancel pending DNS request and set it to -1 */
+		CommEvDNSCancelPendingRequest(dnsdata->resolv_base, dnsdata->req_id);
+		dnsdata->req_id 	= -1;
+	}
+
+	return 0;
+}
+/**************************************************************************************************************************/
 int CommEvDNSCancelPendingRequest(EvDNSResolverBase *resolv_base, int req_id)
 {
 	DNSPendingQuery *pending_query;
@@ -276,11 +368,11 @@ int CommEvDNSCancelPendingRequest(EvDNSResolverBase *resolv_base, int req_id)
 	/* Not in use, bail out */
 	if (!pending_query->flags.in_use)
 	{
-		KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Trying to cancel not in use request [%d]\n", pending_query->slot_id);
+		KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Trying to cancel not in use request [%d]\n", pending_query->slot_id);
 		return 0;
 	}
 
-	KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "SLOT_ID [%d] - WAITING_REPLY [%d]\n", pending_query->slot_id, pending_query->flags.waiting_reply);
+	KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "SLOT_ID [%d] - WAITING_REPLY [%d]\n", pending_query->slot_id, pending_query->flags.waiting_reply);
 
 	/* There are two conditions to be addressed here: if we are not waiting for reply, just wipe the pending request out. Otherwise, mark it as canceled, and release
 	 * the slot once we see a reply, or if we try to RXMIT */
@@ -341,7 +433,7 @@ static int CommEvDNSPeriodicTimerEvent(int fd, int can_write_sz, int thrd_id, vo
 		total_delta_ms	= CommEvDNStvSubMsec(&pending_query->transmit_tv, &resolv_base->ev_base->stats.cur_invoke_tv);
 		rxmit_delta_ms	= CommEvDNStvSubMsec(&pending_query->retransmit_tv, &resolv_base->ev_base->stats.cur_invoke_tv);
 
-		KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_INFO, LOGCOLOR_PURPLE, "Checking REQ_ID [%d] - TOTAL_MS [%d] - RXMIT_MS [%d]\n", pending_query->slot_id, total_delta_ms, rxmit_delta_ms);
+		KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_PURPLE, "Checking REQ_ID [%d] - TOTAL_MS [%d] - RXMIT_MS [%d]\n", pending_query->slot_id, total_delta_ms, rxmit_delta_ms);
 
 		/* Request timed out, invoke CB_H with reply_count zero */
 		if ((total_delta_ms > resolv_base->timeout_ms.lookup))
@@ -354,7 +446,7 @@ static int CommEvDNSPeriodicTimerEvent(int fd, int can_write_sz, int thrd_id, vo
 			/* We can still retry - Reschedule to write again */
 			if (pending_query->req_count <= resolv_base->retry_count)
 			{
-				KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "RXMIT REQ_ID [%d] - TOTAL [%d/%d]\n", pending_query->slot_id, pending_query->req_count, resolv_base->retry_count);
+				KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "RXMIT REQ_ID [%d] - TOTAL [%d/%d]\n", pending_query->slot_id, pending_query->req_count, resolv_base->retry_count);
 
 				/* Touch rxmit_timestamp */
 				memcpy(&pending_query->retransmit_tv,  &resolv_base->ev_base->stats.cur_invoke_tv, sizeof(struct timeval));
@@ -393,7 +485,7 @@ static int CommEvDNSPeriodicTimerEvent(int fd, int can_write_sz, int thrd_id, vo
 		/* Point to next node */
 		node = node->next;
 
-		KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "TIMED_OUT REQ_ID [%d] - TOTAL [%d/%d]\n", pending_query->slot_id, pending_query->req_count, resolv_base->retry_count);
+		KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "TIMED_OUT REQ_ID [%d] - TOTAL [%d/%d]\n", pending_query->slot_id, pending_query->req_count, resolv_base->retry_count);
 
 		/* Free slot and remove node from list */
 		SlotQueueFree(&resolv_base->pending_req.slots, pending_query->slot_id);
@@ -433,7 +525,7 @@ static int CommEvDNSWriteEvent(int fd, int can_write_sz, int thrd_id, void *cb_d
 		/* No more queries to write, bail out */
 		if (!pending_query)
 		{
-			KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FINISH LIST - Wrote [%d] requests\n", total_req_sent);
+			KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FINISH LIST - Wrote [%d] requests\n", total_req_sent);
 
 			/* Set read event for socket */
 			EvKQBaseSetEvent(resolv_base->ev_base, resolv_base->socket_fd, COMM_EV_READ, COMM_ACTION_ADD_VOLATILE, CommEvDNSDataEvent, resolv_base);
@@ -455,12 +547,12 @@ static int CommEvDNSWriteEvent(int fd, int can_write_sz, int thrd_id, void *cb_d
 		wrote_bytes = sendto(resolv_base->socket_fd, (char*)&pending_query->rfc1035_request, pending_query->rfc1035_request_sz, 0,
 				(struct sockaddr *)&resolv_base->dns_serv_addr, sizeof(struct sockaddr_in));
 
-		KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "WROTE [%d] bytes\n", wrote_bytes);
+		KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "WROTE [%d] bytes\n", wrote_bytes);
 
 		/* Failed writing, enqueue it back and bail out */
 		if (wrote_bytes < pending_query->rfc1035_request_sz)
 		{
-			KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed writing\n");
+			KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed writing\n");
 
 			/* Enqueue request back for next IO loop */
 			DLinkedListAdd(&resolv_base->pending_req.req_list, &pending_query->node, pending_query);
@@ -497,7 +589,7 @@ static int CommEvDNSWriteEvent(int fd, int can_write_sz, int thrd_id, void *cb_d
 	/* Reschedule WRITE event */
 	EvKQBaseSetEvent(resolv_base->ev_base, resolv_base->socket_fd, COMM_EV_WRITE, COMM_ACTION_ADD_VOLATILE, CommEvDNSWriteEvent, resolv_base);
 
-	KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "LEAVE - Wrote [%d] requests\n", total_req_sent);
+	KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "LEAVE - Wrote [%d] requests\n", total_req_sent);
 
 	return total_wrote_bytes;
 }
@@ -505,7 +597,7 @@ static int CommEvDNSWriteEvent(int fd, int can_write_sz, int thrd_id, void *cb_d
 static int CommEvDNSDataEvent(int fd, int to_read_sz, int thrd_id, void *cb_data, void *base_ptr)
 {
 	DNSPendingQuery *pending_query;
-	rfc1035_rr *answers;
+	rfc1035_rr *answers = NULL;
 	DNSAReply a_reply;
 
 	char rfc1053_reply[to_read_sz + 16];
@@ -524,8 +616,15 @@ static int CommEvDNSDataEvent(int fd, int to_read_sz, int thrd_id, void *cb_data
 	memset(&a_reply, 0, sizeof(DNSAReply));
 	memset(&rfc1053_reply, 0, sizeof(rfc1053_reply));
 
+	KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - TO read [%d] bytes\n", fd, to_read_sz);
+
+//	if (to_read_sz < 12)
+//		goto next_packet;
+
 	/* Read UDP data from socket */
 	data_read 						= recv(fd, (void*)&rfc1053_reply, to_read_sz, 0);
+
+	KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] READ [%d]/[%d] bytes\n", fd, data_read, to_read_sz);
 
 	/* Failed reading */
 	if (data_read < 0)
@@ -538,17 +637,19 @@ static int CommEvDNSDataEvent(int fd, int to_read_sz, int thrd_id, void *cb_data
 	/* Parse DNS reply */
 	reply_count 			= rfc1035AnswersUnpack((const char*)&rfc1053_reply, data_read, &answers, &reply_seq_id);
 
+//	EvKQBaseLoggerHexDump(resolv_base->log_base, LOGTYPE_DEBUG, &rfc1053_reply, data_read, 8, 4);
+
 	/* Grab pending query back */
 	pending_query			= MemArenaGrabByID(resolv_base->pending_req.arena, reply_seq_id);
 
-	KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "ID [%d] - READ [%d] bytes - reply [%d]\n", reply_seq_id, data_read, reply_count);
+	KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] ID [%d] - READ [%d]/[%d] bytes - reply [%d]\n", fd, reply_seq_id, data_read, to_read_sz, reply_count);
 
 //	assert(pending_query->flags.in_use);
 
 	/* Unexpected reply */
 	if (!pending_query->flags.in_use)
 	{
-		KQBASE_LOG_PRINTF(resolv_base->ev_base->log_base, LOGTYPE_WARNING, LOGCOLOR_GREEN, "Unexpected reply for REQ_ID [%d]\n", reply_seq_id);
+		KQBASE_LOG_PRINTF(resolv_base->log_base, LOGTYPE_WARNING, LOGCOLOR_GREEN, "Unexpected reply for REQ_ID [%d]\n", reply_seq_id);
 		goto next_packet;
 	}
 
@@ -566,10 +667,19 @@ static int CommEvDNSDataEvent(int fd, int to_read_sz, int thrd_id, void *cb_data
 		if (answers[i].type == RFC1035_TYPE_A)
 		{
 			memcpy(&a_reply.ip_arr[valid_reply_count].addr, answers[i].rdata, sizeof(struct in_addr));
-			a_reply.ip_arr[valid_reply_count].ttl = answers[i].ttl;
-
-			valid_reply_count++;
 		}
+		else if (answers[i].type == RFC1035_TYPE_AAAA)
+		{
+			memcpy(&a_reply.ip_arr[valid_reply_count].addr6, answers[i].rdata, sizeof(struct in6_addr));
+		}
+		else
+		{
+			continue;
+		}
+
+		a_reply.ip_arr[valid_reply_count].type 	= answers[i].type;
+		a_reply.ip_arr[valid_reply_count].ttl 	= answers[i].ttl;
+		valid_reply_count++;
 	}
 
 	/* Touch base statistics */
@@ -735,6 +845,51 @@ static unsigned short rfc1035BuildAQuery(const char *hostname, char *buf, size_t
 
 	offset += rfc1035HeaderPack(buf + offset, sz - offset, &header);
 	offset += rfc1035QuestionPack(buf + offset, sz - offset, hostname, RFC1035_TYPE_A, RFC1035_CLASS_IN);
+
+	*szp = (size_t) offset;
+
+	return header.id;
+}
+/**************************************************************************************************************************/
+static unsigned short rfc1035BuildAAAAQuery(const char *hostname, char *buf, size_t *szp, unsigned short qid)
+{
+	static rfc1035_message header;
+	off_t offset = 0;
+	size_t sz = *szp;
+
+	memset(&header, 0, sizeof(rfc1035_message));
+
+	header.id		= qid;
+	header.qr		= 0;
+	header.rd		= 1;
+	header.opcode	= 0;		/* QUERY */
+	header.qdcount	= (unsigned int) 1;
+
+	offset += rfc1035HeaderPack(buf + offset, sz - offset, &header);
+	offset += rfc1035QuestionPack(buf + offset, sz - offset, hostname, RFC1035_TYPE_AAAA, RFC1035_CLASS_IN);
+
+	*szp = (size_t) offset;
+
+	return header.id;
+}
+/**************************************************************************************************************************/
+static unsigned short rfc1035BuildAllQuery(const char *hostname, char *buf, size_t *szp, unsigned short qid)
+{
+	static rfc1035_message header;
+	off_t offset = 0;
+	size_t sz = *szp;
+
+	memset(&header, 0, sizeof(rfc1035_message));
+
+	header.id		= qid;
+	header.qr		= 0;
+	header.rd		= 1;
+	header.opcode	= 0;		/* QUERY */
+	header.qdcount	= (unsigned int) 2;
+
+	offset += rfc1035HeaderPack(buf + offset, sz - offset, &header);
+	offset += rfc1035QuestionPack(buf + offset, sz - offset, hostname, RFC1035_TYPE_A, RFC1035_CLASS_IN);
+	offset += rfc1035QuestionPack(buf + offset, sz - offset, hostname, RFC1035_TYPE_AAAA, RFC1035_CLASS_IN);
 
 	*szp = (size_t) offset;
 

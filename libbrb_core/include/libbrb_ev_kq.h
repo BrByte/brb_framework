@@ -40,14 +40,10 @@
 #include <sys/types.h>
 #include <sys/signal.h>
 #include <sys/socket.h>
-#include <sys/sysctl.h>
+//#include <sys/sysctl.h>
 #include <sys/event.h>
 
 #include <aio.h>
-#include <sys/mount.h>
-#if !defined(__linux__)
-#include <ufs/ufs/ufsmount.h>
-#endif
 
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -172,6 +168,7 @@ typedef enum
 	COMM_EV_ERROR,
 	COMM_EV_TIMER,
 	COMM_EV_FILEMON,
+	COMM_EV_FS,
 	COMM_EV_DEFER_CHECK_READ,
 	COMM_EV_DEFER_CHECK_WRITE,
 	COMM_EV_LASTITEM
@@ -312,7 +309,7 @@ typedef struct _EvKQBase
 	struct timespec timeout;
 	int skew_min_detect_sec;
 	int kq_base;
-	int kq_thrd_id;
+	pthread_t kq_thrd_id;
 	int ke_chg_idx;
 
 	struct
@@ -381,7 +378,7 @@ typedef struct _EvKQBase
 
 } EvKQBase;
 /*****************************************************/
-EvKQBaseLogBase *glob_sinal_log_base;
+static EvKQBaseLogBase *glob_sinal_log_base;
 /*****************************************************/
 
 /* ev_kq_base.c */
@@ -411,7 +408,7 @@ void EvKQBaseFDArenaNew(EvKQBase *kq_base);
 void EvKQBaseFDArenaDestroy(EvKQBase *kq_base);
 EvBaseKQFileDesc *EvKQBaseFDGrabFromArena(EvKQBase *kq_base, int fd);
 int EvKQBaseFDEventInvoke(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd, int ev_code, int ev_sz, int thrd_id, void *parent);
-int EvKQBaseFDGenericInit(EvKQBase *kq_base, int fd, int type);
+int EvKQBaseFDGenericInit(EvKQBase *kq_base, int fd, EvBaseFDType type);
 int EvKQBaseFileFDInit(EvKQBase *kq_base, int fd);
 int EvKQBaseSerialPortFDInit(EvKQBase *kq_base, int fd);
 
@@ -419,12 +416,15 @@ int EvKQBaseSocketGenericNew(EvKQBase *kq_base, int af, int style, int protocol,
 int EvKQBaseSocketRouteNew(EvKQBase *kq_base, int proto);
 int EvKQBaseSocketRAWNew(EvKQBase *kq_base, int af, int proto);
 int EvKQBaseSocketTCPNew(EvKQBase *kq_base);
+int EvKQBaseSocketTCPv6New(EvKQBase *kq_base);
 int EvKQBaseSocketUNIXNew(EvKQBase *kq_base);
 int EvKQBaseSocketUDPNew(EvKQBase *kq_base);
+int EvKQBaseSocketUDPExt(EvKQBase *kq_base, int af);
 int EvKQBaseSocketRawNew(EvKQBase *kq_base);
 int EvKQBaseSocketCustomNew(EvKQBase *kq_base, int v6);
 int EvKQBaseSocketNetmapNew(EvKQBase *kq_base, int flags);
 int EvKQBaseSocketUDPNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsigned short port);
+int EvKQBaseSocketUDPExtAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsigned short port, int af);
 int EvKQBaseSocketRawNewAndBind(EvKQBase *kq_base);
 int EvKQBaseSocketCustomNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsigned short port, int v6);
 

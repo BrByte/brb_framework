@@ -1,17 +1,13 @@
-#CC=gcc
-#gnu99
-INCLUDE= -I. -I ./include -I /include -I /usr/include -I /usr/include/bits -I /usr/include/kqueue -I /usr/local/include
-LDFLAGS= -shared -std=c99
-CFLAGS 	= -Wall -Wnocomment -pedantic -std=c99
-PROGS	= libbrb_core
-CFLAGS  = -O2 -g $(AC_CFLAGS) $(INCLUDE) -D_GNU_SOURCE -fPIC -DIS_LINUX
+INCLUDE = -I. -I ./include -I /include -I /usr/include -I /usr/include/kqueue -I /usr/local/include
+LDFLAGS = -shared -std=c99
+CFLAGS  = -O2 -g -Wno-comment $(AC_CFLAGS) $(INCLUDE) -D_GNU_SOURCE -fPIC -DIS_LINUX
 
 XTRA_LIBS 	= -lm -lbsd
-LIBS    	= -L. $(XTRA_LIBS) -L /usr/local/lib
+LIBS    	= -L. $(XTRA_LIBS) -L /usr/local/lib -L /usr/lib/x86_64-linux-gnu
 
 LIBRB_NAME	= libbrb_core
-LIBRB_LIB	= libbrb_core.a
-LIBRB_OBJS	= libbrb_core.so
+LIBRB_LIB	= $(LIBRB_NAME).a
+LIBRB_OBJS	= $(LIBRB_NAME).so
 
 LIBRB_INCLUDE=\
 		include/libbrb_comm_proto.h \
@@ -35,6 +31,9 @@ LIBRB_SRC=	\
 		comm/core/icmp/comm_icmp_base.c \
 		comm/core/tcp/comm_tcp_aio.c \
 		comm/core/tcp/comm_tcp_client_pool.c \
+		comm/core/tcp/comm_tcp_client_read.c \
+		comm/core/tcp/comm_tcp_client_ssl.c \
+		comm/core/tcp/comm_tcp_client_write.c \
 		comm/core/tcp/comm_tcp_client.c \
 		comm/core/tcp/comm_tcp_server.c \
 		comm/core/tcp/comm_tcp_server_conn.c \
@@ -42,14 +41,15 @@ LIBRB_SRC=	\
 		comm/core/unix/comm_unix_client.c \
 		comm/core/unix/comm_unix_server.c \
 		comm/core/unix/comm_unix_aio.c \
+		\
+		comm/core/comm_core_utils.c \
 		comm/core/comm_dns_resolver.c \
 		comm/core/comm_statistics.c \
 		comm/core/comm_desc_token.c \
-		comm/utils/comm_ftp_client.c \
-		comm/utils/comm_tftp_server.c \
-		comm/utils/comm_tzsp_server.c \
+		\
 		comm/utils/comm_ssh_client.c \
 		comm/utils/comm_ssl_utils.c \
+		comm/utils/comm_ssl_pkey.c \
 		comm/utils/comm_icmp_pinger.c \
 		crypto/base64.c \
 		crypto/blowfish.c \
@@ -69,6 +69,7 @@ LIBRB_SRC=	\
 		data/core/slotqueue.c \
 		data/utils/string_array.c \
 		data/utils/string.c \
+		data/utils/str.c \
 		data/utils/ipv4_table.c \
 		data/utils/utils.c \
 		data/utils/utils_nw.c \
@@ -104,11 +105,11 @@ OBJS 	= $(LIBRB_SRC:.c=.o)
 CFILES  = $(patsubst %.o,%.c,$(OBJS)) 
 	
 .PHONY: all
-all: $(PROGS)
+all: $(LIBRB_NAME)
 
 $(OBJS):	Makefile
 
-$(PROGS): $(OBJS)
+$(LIBRB_NAME): $(OBJS)
 		$(CC) $(LDFLAGS) -o $(LIBRB_OBJS) $(OBJS) -lm
 		ar cru $(LIBRB_LIB) $(LIBRB_OBJS)
 
@@ -123,10 +124,9 @@ query:
 	-sbquery nosuchthing
 
 clean:
-	-rm -f $(OBJS) *.a *.o *.core $(PROGS) $(SRCS:.c=.d)
+	-rm -f $(OBJS) *.a *.o *.core $(LIBRB_LIB) $(LIBRB_OBJS) $(SRCS:.c=.d)
 	
 install:
 	cp $(LIBRB_INCLUDE) /usr/local/include
 	cp $(LIBRB_LIB) /usr/local/lib
-	cp $(LIBRB_OBJS) /usr/lib
 	cp $(LIBRB_OBJS) /usr/local/lib

@@ -35,11 +35,14 @@
 #ifndef LIBBRB_LOGGER_H_
 #define LIBBRB_LOGGER_H_
 
-#define KQBASE_LOG_PRINTF(log_base, type, color, msg, ...)	if (log_base) EvKQBaseLoggerAdd(log_base, type, color, __FILE__, __func__, __LINE__, msg, ##__VA_ARGS__)
+#define KQBASE_LOG_PRINTF(log_base, type, color, msg, ...)	if (log_base) EvKQBaseLoggerAdd(log_base, 0, type, color, __FILE__, __func__, __LINE__, msg, ##__VA_ARGS__)
+#define KQBASE_LOGSUB_PRINTF(log_sub, type, color, msg, ...) if (EvKQBaseLogSubIsEnabled(log_sub, type)) EvKQBaseLoggerAdd(((EvKQBaseLogSub *)log_sub)->log_base, 1, type, color, __FILE__, __func__, __LINE__, msg, ##__VA_ARGS__)
 
-/******************************************************************************************************/
+/************************************************************************************************************************/
+/* DEFINES */
+/************************************************************/
 /* Background Colors
-/******************************************************************************************************/
+/************************************************************/
 #define COLOR_BACKGROUND_BLACK 			"\033[40m"
 #define COLOR_BACKGROUND_RED   			"\033[41m"
 #define COLOR_BACKGROUND_GREEN 			"\033[42m"
@@ -48,9 +51,9 @@
 #define COLOR_BACKGROUND_MAGENTA 		"\033[45m"
 #define COLOR_BACKGROUND_CYAN 			"\033[46m"
 #define COLOR_BACKGROUND_GREY 			"\033[47m"
-/******************************************************************************************************/
+/************************************************************/
 /* Foreground Colors
-/******************************************************************************************************/
+/************************************************************/
 #define COLOR_FOREGROUND_DEFAULT 		"\033[0m"
 #define COLOR_FOREGROUND_BLACK 			"\033[30m"
 #define COLOR_FOREGROUND_RED   			"\033[31m"
@@ -62,7 +65,7 @@
 #define COLOR_FOREGROUND_GREY 			"\033[37m"
 #define COLOR_FOREGROUND_WHITE 			"\033[1m"
 #define COLOR_FOREGROUND_ORANGE			"\033[38;5;202m"
-/******************************************************************************************************/
+/************************************************************/
 #define COLOR_FOREGROUND_DARKGRAY 		"\033[01;30m"
 #define COLOR_FOREGROUND_LIGHTRED 		"\033[01;31m"
 #define COLOR_FOREGROUND_LIGHTGREEN 	"\033[01;32m"
@@ -70,19 +73,20 @@
 #define COLOR_FOREGROUND_LIGHTBLUE 		"\033[01;34m"
 #define COLOR_FOREGROUND_LIGHTPURPLE 	"\033[01;35m"
 #define COLOR_FOREGROUND_LIGHTCYAN 		"\033[01;36m"
-/******************************************************************************************************/
-
+/************************************************************************************************************************/
+/* ENUMS */
+/************************************************************/
 typedef enum
 {
 	LOGTYPE_UNINIT,
 	LOGTYPE_VERBOSE,
+	LOGTYPE_DEBUG,
 	LOGTYPE_INFO,
 	LOGTYPE_WARNING,
-	LOGTYPE_DEBUG,
 	LOGTYPE_CRITICAL,
 	LOGTYPE_LASTITEM
 } EvKQBaseLogTypeCodes;
-
+/************************************************************/
 typedef enum
 {
 	LOGCOLOR_RED,
@@ -94,7 +98,9 @@ typedef enum
 	LOGCOLOR_ORANGE,
 	LOGCOLOR_LASTITEM
 } EvKQBaseLogColorCodes;
-
+/************************************************************************************************************************/
+/* STRUCTS */
+/************************************************************/
 typedef struct _EvKQBaseLogMemEntry
 {
 	DLinkedListNode node;
@@ -109,7 +115,7 @@ typedef struct _EvKQBaseLogMemEntry
 	} flags;
 
 } EvKQBaseLogMemEntry;
-
+/************************************************************/
 typedef struct _EvKQBaseLogBaseConf
 {
 	char *fileout_pathstr;
@@ -137,7 +143,7 @@ typedef struct _EvKQBaseLogBaseConf
 	} flags;
 
 } EvKQBaseLogBaseConf;
-
+/************************************************************/
 typedef struct _EvKQBaseLogBase
 {
 	struct _EvKQBase *ev_base;
@@ -145,7 +151,8 @@ typedef struct _EvKQBaseLogBase
 	FILE *fileout;
 	char *fileout_pathstr;
 	int ref_count;
-	int log_level;
+
+	EvKQBaseLogTypeCodes log_level;
 	int log_section;
 
 	struct
@@ -180,22 +187,40 @@ typedef struct _EvKQBaseLogBase
 	} flags;
 
 } EvKQBaseLogBase;
+/************************************************************/
+typedef struct _EvKQBaseLogSub
+{
+	struct _EvKQBaseLogBase *log_base;
 
+	EvKQBaseLogTypeCodes log_level;
 
-static const char *evkq_glob_logtype_str[] = {"LOGTYPE_UNINIT", "VERBOSE", "INFO", "WARNING", "DEBUG", "CRITICAL", NULL};
+	struct
+	{
+		unsigned int debug_disable:1;
+	} flags;
 
+} EvKQBaseLogSub;
+/************************************************************************************************************************/
+/* Public Calls */
+/************************************************************/
+static const char *evkq_glob_logtype_str[] = {"LOGTYPE_UNINIT", "VERBOSE", "DEBUG", "INFO", "WARNING", "CRITICAL", NULL};
+/************************************************************/
 /* ev_kq_logger.c */
 EvKQBaseLogBase *EvKQBaseLogBaseNew(struct _EvKQBase *ev_base, EvKQBaseLogBaseConf *log_conf);
 int EvKQBaseLogBaseDestroy(EvKQBaseLogBase *log_base);
 EvKQBaseLogBase *EvKQBaseLogBaseLink(EvKQBaseLogBase *log_base);
 int EvKQBaseLogBaseUnlink(EvKQBaseLogBase *log_base);
 void EvKQBaseLoggerHexDump(EvKQBaseLogBase *log_base, int type, char *data, int size, int item_count, int column_count);
-char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int type, int color, const char *file, const char *func, const int line, const char *message, ...);
+
+int EvKQBaseLogSubIsEnabled(EvKQBaseLogSub *log_sub, int type);
+int EvKQBaseLogSubApply(EvKQBaseLogSub *log_sub, EvKQBaseLogSub *log_cfg);
+char *EvKQBaseLoggerSub(EvKQBaseLogSub *log_ref, EvKQBaseLogTypeCodes type, int color, const char *file, const char *func, const int line, const char *message, ...);
+char *EvKQBaseLoggerAdd(EvKQBaseLogBase *log_base, int force, EvKQBaseLogTypeCodes type, int color, const char *file, const char *func, const int line, const char *message, ...);
+
 void EvKQBaseDumpKEvent(struct kevent *kev);
 void EvKQBaseLogHexDump(char *data, int size, int item_count, int column_count);
 int EvKQBaseLoggerMemDumpOnCrash(EvKQBaseLogBase *log_base);
 int EvKQBaseLoggerMemDumpToFile(EvKQBaseLogBase *log_base, char *path_str);
 int EvKQBaseLoggerMemDump(EvKQBaseLogBase *log_base);
-
-
+/************************************************************************************************************************/
 #endif /* LIBBRB_LOGGER_H_ */

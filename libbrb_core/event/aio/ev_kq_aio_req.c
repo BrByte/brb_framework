@@ -171,8 +171,9 @@ void EvAIOReqQueueEnqueue(EvAIOReqQueue *aio_req_queue, EvAIOReq *aio_req)
 
 	AIOREQ_QUEUE_MUTEX_LOCK(aio_req_queue);
 
-	/* Save current IOLOOP */
+	/* Save current IOLOOP and enqueue tv */
 	aio_req->ioloop_queue = aio_req_queue->ev_base->stats.kq_invoke_count;
+	memcpy(&aio_req->tv.enqueue, &aio_req_queue->ev_base->stats.cur_invoke_tv, sizeof(struct timeval));
 
 	BRB_ASSERT_FMT(aio_req_queue->ev_base, (aio_req->data.size != 0), "Invalid AIO_REQ [%ld / %ld]\n", aio_req->data.size, aio_req->data.offset);
 
@@ -401,15 +402,15 @@ long EvAIOReqGetMissingSize(EvAIOReq *aio_req)
 /**************************************************************************************************************************/
 char *EvAIOReqGetDataPtr(EvAIOReq *aio_req)
 {
-	char *base_ptr;
+	char *aux_ptr;
 
 	/* Grab data from transformed store data or directly by pointed data */
 	if (aio_req->flags.transformed)
-		base_ptr = MemBufferOffsetDeref(aio_req->transformed_mb, aio_req->data.offset);
+		aux_ptr = MemBufferOffsetDeref(aio_req->transformed_mb, aio_req->data.offset);
 	else
-		base_ptr = aio_req->data.ptr + aio_req->data.offset;
+		aux_ptr = aio_req->data.ptr + aio_req->data.offset;
 
-	return base_ptr;
+	return aux_ptr;
 }
 /**************************************************************************************************************************/
 void EvAIOReqInvokeCallBacksAndDestroy(EvAIOReq *aio_req, int delay, int fd, int size, int thrd_id, void *base_ptr)

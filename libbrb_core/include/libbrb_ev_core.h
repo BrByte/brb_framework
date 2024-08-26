@@ -100,6 +100,7 @@ typedef enum
 	KQ_CB_HANDLER_READ_ERROR,
 	KQ_CB_HANDLER_WRITE_ERROR,
 	KQ_CB_HANDLER_FILEMON,
+	KQ_CB_HANDLER_FS,
 	KQ_CB_HANDLER_DEFER_CHECK_READ,
 	KQ_CB_HANDLER_DEFER_CHECK_WRITE,
 	KQ_CB_HANDLER_LASTITEM
@@ -324,9 +325,11 @@ typedef struct _EvBaseKQFileDesc
 	{
 		char *description_str;
 		int description_sz;
-		int type;
+		EvBaseFDType type;
 		int num;
 		int tos;
+
+		unsigned int fflags;
 	} fd;
 
 	struct

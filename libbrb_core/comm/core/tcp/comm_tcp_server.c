@@ -69,7 +69,7 @@ static EvBaseKQCBH CommEvTCPServerEventSSLRead;
 static EvBaseKQCBH CommEvTCPServerEventSSLWrite;
 
 static int CommEvTCPServerListenerTCPInit(CommEvTCPServer *srv_ptr, CommEvTCPServerConf *server_conf, CommEvTCPServerListener *listener);
-static int CommEvTCPServerListen(CommEvTCPServer *srv_ptr, int slot_id);
+static int CommEvTCPServerListenInet(CommEvTCPServer *srv_ptr, int slot_id);
 static int CommEvTCPServerListenUnix(CommEvTCPServer *srv_ptr, int listener_id, char *path_str);
 static void CommEvTCPServerDispatchEvent(CommEvTCPServer *srv_ptr, CommEvTCPServerConn *conn_hnd, int data_sz, int thrd_id, int ev_type);
 static int CommEvTCPServerSelfSyncReadBuffer(CommEvTCPServerConn *conn_hnd, int orig_read_sz, int thrd_id);
@@ -287,15 +287,17 @@ int CommEvTCPServerListenerAdd(CommEvTCPServer *srv_ptr, CommEvTCPServerConf *se
 	memset(listener, 0, sizeof(CommEvTCPServerListener));
 
 	/* Populate data into listener */
-	listener->parent_srv	= srv_ptr;
-	listener->slot_id		= slot_id;
-	listener->port			= server_conf->port;
-	listener->unix_lid		= -1;
+	listener->parent_srv			= srv_ptr;
+	listener->slot_id				= slot_id;
+	listener->port					= server_conf->port;
+	listener->unix_lid				= -1;
+	listener->ssldata.ssl_context	= server_conf->ssl.ssl_context;
 
 	/* Copy common configuration information */
 	srv_ptr->cfg[slot_id].bind_method				= server_conf->bind_method;
 	srv_ptr->cfg[slot_id].read_mthd					= server_conf->read_mthd;
 	srv_ptr->cfg[slot_id].srv_proto					= server_conf->srv_proto;
+	srv_ptr->cfg[slot_id].srv_type					= server_conf->srv_type;
 	srv_ptr->cfg[slot_id].port						= server_conf->port;
 	srv_ptr->cfg[slot_id].cli_queue_max				= server_conf->limits.cli_queue_max;
 	srv_ptr->cfg[slot_id].timeout.autodetect_ms		= server_conf->timeout.autodetect_ms;
@@ -634,11 +636,11 @@ static int CommEvTCPServerListenerTCPInit(CommEvTCPServer *srv_ptr, CommEvTCPSer
 	if (server_conf->unix_server.path_str && server_conf->unix_server.no_brb_proto)
 	{
 		/* Create socket */
-		listener->socket_fd = EvKQBaseSocketUNIXNew(srv_ptr->kq_base);
+		listener->socket_fd 	= EvKQBaseSocketUNIXNew(srv_ptr->kq_base);
 	}
 	else
 	{
-		listener->socket_fd = EvKQBaseSocketTCPNew(srv_ptr->kq_base);
+		listener->socket_fd 	= server_conf->srv_type == COMM_SERVER_TYPE_INET6 ? EvKQBaseSocketTCPv6New(srv_ptr->kq_base) : EvKQBaseSocketTCPNew(srv_ptr->kq_base);
 	}
 
 	KQBASE_LOG_PRINTF(srv_ptr->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - Will add LISTENER_ID [%d]\n", listener->socket_fd, listener->slot_id);
@@ -674,7 +676,7 @@ static int CommEvTCPServerListenerTCPInit(CommEvTCPServer *srv_ptr, CommEvTCPSer
 	else
 	{
 		/* Begin to listen */
-		op_status = CommEvTCPServerListen(srv_ptr, slot_id);
+		op_status = CommEvTCPServerListenInet(srv_ptr, slot_id);
 	}
 
 	/* Check if everything went OK with socket */
@@ -686,7 +688,7 @@ static int CommEvTCPServerListenerTCPInit(CommEvTCPServer *srv_ptr, CommEvTCPSer
 	}
 
 	/* Grab FD from reference table and mark listening socket flags */
-	kq_fd = EvKQBaseFDGrabFromArena(srv_ptr->kq_base, listener->socket_fd);
+	kq_fd 	= EvKQBaseFDGrabFromArena(srv_ptr->kq_base, listener->socket_fd);
 	kq_fd->flags.so_listen = 1;
 
 	/* Set humanized description of this socket */
@@ -713,7 +715,8 @@ static int CommEvTCPServerListenerTCPInit(CommEvTCPServer *srv_ptr, CommEvTCPSer
 			strncpy((char*)&srv_ptr->cfg[slot_id].ssl.ca_cert_path, server_conf->ssl.ca_cert_path, sizeof(srv_ptr->cfg[slot_id].ssl.ca_cert_path));
 
 		/* Create new context */
-		listener->ssldata.ssl_context	= SSL_CTX_new(SSLv23_server_method());
+		if (!listener->ssldata.ssl_context)
+			listener->ssldata.ssl_context	= SSL_CTX_new(SSLv23_server_method());
 
 		/* Failed initializing SSL context, bail out */
 		if (!listener->ssldata.ssl_context)
@@ -754,46 +757,54 @@ static int CommEvTCPServerListenerTCPInit(CommEvTCPServer *srv_ptr, CommEvTCPSer
 
 			/* Load CA private key */
 			srv_ptr->cfg[slot_id].ssl.ca_cert.key_private = CommEvSSLUtils_X509PrivateKeyReadFromFile((char*)&srv_ptr->cfg[slot_id].ssl.ca_key_path);
-
 		}
 	}
 
 	return 1;
 }
 /**************************************************************************************************************************/
-static int CommEvTCPServerListen(CommEvTCPServer *srv_ptr, int listener_id)
+static int CommEvTCPServerListenInet(CommEvTCPServer *srv_ptr, int listener_id)
 {
 	/* Point to selected LISTENER */
 	CommEvTCPServerListener *listener	= &srv_ptr->listener.arr[listener_id];
+	int socket_size 					= sizeof(struct sockaddr_in);
 	int op_status						= -1;
 
 	/* Initialize SERVER_ADDR STRUCT */
 	memset(&srv_ptr->cfg[listener_id].bind_addr, 0, sizeof(srv_ptr->cfg[listener_id].bind_addr));
 
-	/* Populate CFG STRUCT */
-	srv_ptr->cfg[listener_id].bind_addr.sin_family		= AF_INET;
-	srv_ptr->cfg[listener_id].bind_addr.sin_port		= htons(listener->port);
-	srv_ptr->cfg[listener_id].bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-	switch (srv_ptr->cfg[listener_id].bind_method)
+	if (srv_ptr->cfg[listener_id].srv_type == COMM_SERVER_TYPE_INET6)
 	{
-	case COMM_SERVER_BINDANY:		srv_ptr->cfg[listener_id].bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);		break;
-	case COMM_SERVER_BINDLOOPBACK:	srv_ptr->cfg[listener_id].bind_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);	break;
+		/* Populate CFG STRUCT */
+		satosin6(&srv_ptr->cfg[listener_id].bind_addr)->sin6_family		= AF_INET6;
+		satosin6(&srv_ptr->cfg[listener_id].bind_addr)->sin6_port		= htons(listener->port);
+		satosin6(&srv_ptr->cfg[listener_id].bind_addr)->sin6_addr 		= srv_ptr->cfg[listener_id].bind_method == COMM_SERVER_BINDLOOPBACK ? in6addr_loopback : in6addr_any;
+		socket_size 													= sizeof(struct sockaddr_in6);
+	}
+	else
+	{
+		/* Populate CFG STRUCT */
+		satosin(&srv_ptr->cfg[listener_id].bind_addr)->sin_family		= AF_INET;
+		satosin(&srv_ptr->cfg[listener_id].bind_addr)->sin_port			= htons(listener->port);
+		satosin(&srv_ptr->cfg[listener_id].bind_addr)->sin_addr.s_addr 	= srv_ptr->cfg[listener_id].bind_method == COMM_SERVER_BINDLOOPBACK ? htonl(INADDR_LOOPBACK) : htonl(INADDR_ANY);
+		socket_size 													= sizeof(struct sockaddr_in);
 	}
 
 	/* Bind the socket to SERVER_ADDR */
-	op_status = bind(listener->socket_fd, (struct sockaddr *)&srv_ptr->cfg[listener_id].bind_addr, sizeof(srv_ptr->cfg[listener_id].bind_addr));
+	op_status 							= bind(listener->socket_fd, (struct sockaddr *)&srv_ptr->cfg[listener_id].bind_addr, socket_size);
 
 	if (op_status < 0)
 	{
-		//		printf("CommEvTCPServerListen - COMM_SERVER_FAILURE_BIND\n");
+		KQBASE_LOG_PRINTF(srv_ptr->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed BIND on socket [%d] - ERRNO [%d]\n", listener->socket_fd, errno);
 		return COMM_SERVER_FAILURE_BIND;
 	}
 
 	/* Start listening */
-	if (listen(listener->socket_fd, COMM_TCP_ACCEPT_QUEUE) < 0)
+	op_status 							= listen(listener->socket_fd, COMM_TCP_ACCEPT_QUEUE);
+
+	if (op_status < 0)
 	{
-		//		printf("CommEvTCPServerListen - COMM_SERVER_FAILURE_LISTEN\n");
+		KQBASE_LOG_PRINTF(srv_ptr->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed LISTEN on socket [%d] - ERRNO [%d]\n", listener->socket_fd, errno);
 		return COMM_SERVER_FAILURE_LISTEN;
 	}
 
@@ -808,9 +819,10 @@ static int CommEvTCPServerListenUnix(CommEvTCPServer *srv_ptr, int listener_id, 
 	int servaddr_len 					= 0;
 	struct sockaddr_un  servaddr_un 	= {0};
 	struct sockaddr    *servaddr;
+//	struct sockaddr_un  *servaddr_un 	= &srv_ptr->cfg[listener_id].bind_addr;
 
 	/* Populate structure */
-	servaddr_un.sun_family  = AF_UNIX;
+	servaddr_un.sun_family  			= AF_UNIX;
 	strcpy (servaddr_un.sun_path, path_str);
 	/* Remove file if exists */
 	unlink(servaddr_un.sun_path);
@@ -1366,7 +1378,7 @@ static int CommEvTCPServerEventWrite(int fd, int can_write_sz, int thrd_id, void
 	}
 	case COMM_TCP_AIO_WRITE_ERR_FATAL:
 	{
-		KQBASE_LOG_PRINTF(srv_ptr->log_base, LOGTYPE_INFO, LOGCOLOR_RED, "FD [%d] - Fatal error after [%d] bytes\n", conn_hnd->socket_fd, ioret.aio_total_sz);
+		KQBASE_LOG_PRINTF(srv_ptr->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - Fatal error after [%d] bytes\n", conn_hnd->socket_fd, ioret.aio_total_sz);
 
 		/* Has close request, invoke */
 		if (conn_hnd->flags.close_request)
@@ -1955,7 +1967,7 @@ static int CommEvTCPServerAcceptPostInit(CommEvTCPServer *srv_ptr, CommEvTCPServ
 
 	EvKQBase *ev_base			= srv_ptr->kq_base;
 	int listener_id				= listener->slot_id;
-	unsigned int sockaddr_sz	= sizeof(struct sockaddr_in);
+	unsigned int sockaddr_sz	= srv_ptr->cfg[listener_id].srv_type == COMM_SERVER_TYPE_INET6 ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
 
 	/* Invalid descriptor */
 	if (conn_fd < 0)
@@ -1991,6 +2003,7 @@ static int CommEvTCPServerAcceptPostInit(CommEvTCPServer *srv_ptr, CommEvTCPServ
 	/* Initialize timer IDs and JOB_IDs */
 	conn_hnd->timers.calculate_datarate_id	= -1;
 	conn_hnd->ssldata.shutdown_jobid		= -1;
+	conn_hnd->thrd_id						= -1;
 
 	/* Make it non-blocking */
 	EvKQBaseSocketSetNonBlock(ev_base, conn_hnd->socket_fd);
@@ -2002,7 +2015,19 @@ static int CommEvTCPServerAcceptPostInit(CommEvTCPServer *srv_ptr, CommEvTCPServ
 
 	/* Generate a string representation of binary IP */
 	memset(&conn_hnd->string_ip, 0, sizeof(conn_hnd->string_ip ) - 1);
-	inet_ntop(AF_INET, &conn_hnd->conn_addr.sin_addr, (char*)&conn_hnd->string_ip, INET_ADDRSTRLEN);
+
+	if (srv_ptr->cfg[listener_id].srv_type == COMM_SERVER_TYPE_INET6)
+	{
+		conn_hnd->cli_port 		= ntohs(satosin6(&conn_hnd->conn_addr)->sin6_port);
+		inet_ntop(AF_INET6, &satosin6(&conn_hnd->conn_addr)->sin6_addr, (char*)&conn_hnd->string_ip, sizeof(conn_hnd->string_ip) - 1);
+		inet_ntop(AF_INET6, &satosin6(&conn_hnd->local_addr)->sin6_addr, (char*)&conn_hnd->server_ip, sizeof(conn_hnd->server_ip) - 1);
+	}
+	else
+	{
+		conn_hnd->cli_port 		= ntohs(satosin(&conn_hnd->conn_addr)->sin_port);
+		inet_ntop(AF_INET, &satosin(&conn_hnd->conn_addr)->sin_addr, (char*)&conn_hnd->string_ip, sizeof(conn_hnd->string_ip) - 1);
+		inet_ntop(AF_INET, &satosin(&conn_hnd->local_addr)->sin_addr, (char*)&conn_hnd->server_ip, sizeof(conn_hnd->server_ip) - 1);
+	}
 
 	/* Set all TIMEOUT stuff to UNINITIALIZED, intiialize WRITE_REQ_QUEUE and set DESCRIPTION */
 	EvKQBaseTimeoutInitAllByFD(ev_base, conn_hnd->socket_fd);
@@ -2010,7 +2035,7 @@ static int CommEvTCPServerAcceptPostInit(CommEvTCPServer *srv_ptr, CommEvTCPServ
 
 	/* Set humanized description of this socket */
 	EvKQBaseFDDescriptionSetByFD(ev_base, conn_hnd->socket_fd, "SRV FD/PORT [%d/%d] - CONN - FD/IP:PORT [%d / %s:%d]",
-			listener->socket_fd, listener->port, conn_hnd->socket_fd, (char*)&conn_hnd->string_ip, ntohs(conn_hnd->conn_addr.sin_port));
+			listener->socket_fd, listener->port, conn_hnd->socket_fd, (char*)&conn_hnd->string_ip, conn_hnd->cli_port);
 
 	KQBASE_LOG_PRINTF(srv_ptr->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - Client connected from addr [%s] on listener ID [%d]\n", conn_hnd->socket_fd, conn_hnd->string_ip, listener_id);
 

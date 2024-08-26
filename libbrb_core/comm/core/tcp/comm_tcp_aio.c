@@ -48,9 +48,12 @@ int CommEvTCPAIOWrite(struct _EvKQBase *ev_base, struct _EvKQBaseLogBase *log_ba
 	ioret->aio_total_sz = 0;
 	ioret->aio_count	= 0;
 
+	if (can_write_sz <= 0)
+		can_write_sz 	= 8096;
+
 	/* Grab HEAD AIO request */
 	write_again:
-	aio_req			= EvAIOReqQueuePointToHead(&iodata->write_queue);
+	aio_req				= EvAIOReqQueuePointToHead(&iodata->write_queue);
 
 	/* Nothing left to write */
 	if (!aio_req)
@@ -89,8 +92,23 @@ int CommEvTCPAIOWrite(struct _EvKQBase *ev_base, struct _EvKQBaseLogBase *log_ba
 			return COMM_TCP_AIO_WRITE_NEEDED;
 		}
 
+		/* FATAL write error */
 		KQBASE_LOG_PRINTF(log_base, LOGTYPE_DEBUG, LOGCOLOR_RED, "FD [%d] - AIO_ID [%d] - Fatal write error - CAN [%d] - TRIED [%d] - TOTAL [%d] - ERR [%d]\n",
 				aio_req->fd, aio_req->id, can_write_sz, possible_write_sz, ioret->aio_total_sz, aio_req->err);
+
+		/* Remove AIO_REQ from WRITE_QUEUE */
+		EvAIOReqQueueDequeue(&iodata->write_queue);
+
+		/* Invoke WRITE_CB if set to do it */
+		if (invoke_cb)
+		{
+			KQBASE_LOG_PRINTF(log_base, LOGTYPE_DEBUG, LOGCOLOR_GREEN, "FD [%d] - AIO_ID [%d] - Will invoke CB_FUNC at [%p / %p]\n",
+					aio_req->fd, aio_req->id, aio_req->finish_cb, aio_req->finish_cbdata);
+			EvAIOReqInvokeCallBacks(aio_req, 1, aio_req->fd, -1, -1, parent);
+		}
+
+		/* Destroy AIO_REQ */
+		EvAIOReqDestroy(aio_req);
 		return COMM_TCP_AIO_WRITE_ERR_FATAL;
 	}
 	/* This should not happen */

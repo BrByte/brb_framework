@@ -177,9 +177,12 @@ int ThreadPoolJobEnqueue(ThreadPoolBase *thread_pool, ThreadPoolJobProto *job_pr
 {
 	ThreadPoolInstanceJob *thread_job;
 	int local_udata_sz;
-	EvKQBase *ev_base	= thread_pool->ev_base;
 
-	KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_DEBUG, LOGCOLOR_YELLOW, "Will GRAB [%d]\n", 1);
+	/* Sanitize */
+	if (!thread_pool)
+		return -1;
+
+	EvKQBase *ev_base		= thread_pool->ev_base;
 
 	/* Grow THREAD POOL if NEEDED */
 	ThreadPoolBaseThreadsGrowIfNeeded(thread_pool);
@@ -226,13 +229,36 @@ int ThreadPoolJobEnqueue(ThreadPoolBase *thread_pool, ThreadPoolJobProto *job_pr
 		memcpy(&thread_job->user_data_buf, job_proto->udata, local_udata_sz);
 	}
 
-	KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_DEBUG, LOGCOLOR_CYAN, "Enqueued JOB_ID [%d]\n", thread_job->job_id);
+	KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "Enqueued JOB_ID [%d]\n", thread_job->job_id);
 
 	/* Release the FUCKING LOCK and BROADCAST COND_SIGNAL to the thread POOL */
 	MemSlotBaseUnlock(&thread_pool->jobs.memslot);
 	pthread_cond_signal(&thread_pool->jobs.memslot.thrd_cond.cond);
 
 	return thread_job->job_id;
+}
+/**************************************************************************************************************************/
+int ThreadPoolJobSimple(ThreadPoolBase *thread_pool, ThreadInstanceJobCB_Generic *job_cbh_ptr, ThreadInstanceJobFinishCB *job_finish_cbh_ptr, int retval_type, void *cb_data, void *cb_finish, void *user_data)
+{
+	ThreadPoolJobProto job_proto;
+	int thrd_id;
+
+	/* Clean up stack */
+	memset(&job_proto, 0, sizeof(ThreadPoolJobProto));
+
+	/* Now launch a thread job to prepare this table IO */
+	job_proto.retval_type			= retval_type;
+	job_proto.job_cbh_ptr			= job_cbh_ptr;
+	job_proto.job_cbdata			= cb_data;
+
+	job_proto.job_finish_cbh_ptr	= job_finish_cbh_ptr;
+	job_proto.job_finish_cbdata		= cb_finish;
+	job_proto.user_data				= user_data;
+
+	/* Launch job, use id to lock */
+	thrd_id 						= ThreadPoolJobEnqueue(thread_pool, &job_proto);
+
+	return thrd_id;
 }
 /**************************************************************************************************************************/
 int ThreadPoolJobConsumeReplies(ThreadPoolBase *thread_pool)
@@ -259,7 +285,8 @@ int ThreadPoolJobConsumeReplies(ThreadPoolBase *thread_pool)
 		if ((thread_job->finish_callback.cbh_ptr) && (!thread_job->flags.cancelled))
 			thread_job->finish_callback.cbh_ptr(thread_job, (thread_job->finish_callback.cbdata ? thread_job->finish_callback.cbdata : thread_job->job_callback.job_cbdata));
 
-		KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_DEBUG, LOGCOLOR_PURPLE, "Main THREAD - Invoked CB_FUNC for JOB_ID [%d]\n", thread_job->job_id);
+		KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_INFO, LOGCOLOR_PURPLE, "Main THREAD - Invoked CB_FUNC for JOB_ID [%d] - CB [%p]/[%p]/[%p]\n",
+				thread_job->job_id, thread_job->finish_callback.cbh_ptr, thread_job->finish_callback.cbdata, thread_job->job_callback.job_cbdata);
 
 		/* Free used slot for this job */
 		MemSlotBaseSlotFree(&thread_pool->jobs.memslot, thread_job);
@@ -267,7 +294,7 @@ int ThreadPoolJobConsumeReplies(ThreadPoolBase *thread_pool)
 		continue;
 	}
 
-	KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_DEBUG, LOGCOLOR_CYAN, "Main THREAD - Consumed [%d] replies\n", consume_count);
+	KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "Main THREAD - Consumed [%d] replies\n", consume_count);
 	return consume_count;
 }
 /**************************************************************************************************************************/
@@ -431,14 +458,15 @@ static int ThreadPoolInstanceNotifyFinish(ThreadPoolBase *thread_pool, ThreadPoo
 
 	/* Cleanup and FILL notify DATA */
 	memset(&notify_data, 0, sizeof(ThreadPoolNotifyData));
-	notify_data.job_id	= thread_job->job_id;
-	notify_data.thrd_id = thread_job->run_thread_id;
+	notify_data.job_id		= thread_job->job_id;
+	notify_data.thrd_id 	= thread_job->run_thread_id;
 
 	/* Write to NOTIFY_PIPE */
-	op_status = write(thread_pool->notify_pipe[THREAD_NOTIFY_PIPE_THREADS], (char*)&notify_data, sizeof(ThreadPoolNotifyData));
+	op_status 				= write(thread_pool->notify_pipe[THREAD_NOTIFY_PIPE_THREADS], (char*)&notify_data, sizeof(ThreadPoolNotifyData));
 
+	/* Data can be destroyed in write, ThreadPoolBaseNotifyPipeEventRead -> ThreadPoolJobConsumeReplies -> MemSlotBaseSlotFree */
 	KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Thread [%d] - Finished JOB_ID [%d] - OP_STATUS [%d]\n",
-			thread_job->run_thread_id, thread_job->job_id, op_status);
+			notify_data.thrd_id, notify_data.job_id, op_status);
 
 	return op_status;
 }
@@ -478,7 +506,7 @@ static void *ThreadPoolInstanceMainLoop(void *thread_instance_ptr)
 		thread_job = MemSlotBaseSlotPointToHeadAndSwitchListID(&thread_pool->jobs.memslot, THREAD_LIST_JOB_PENDING, THREAD_LIST_JOB_WORKING);
 		assert(thread_job);
 
-		KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_DEBUG, LOGCOLOR_GREEN, "Thread [%d] - Waking up to dispatch JOB_ID [%d] - IN_USE [%d]\n",
+		KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Thread [%d] - Waking up to dispatch JOB_ID [%d] - IN_USE [%d]\n",
 						thread_instance->thread_id_pool, thread_job->job_id, thread_job->flags.in_use);
 
 		pthread_mutex_unlock(&thread_pool->jobs.memslot.thrd_cond.mutex);
@@ -547,7 +575,7 @@ static void *ThreadPoolInstanceMainLoop(void *thread_instance_ptr)
 		thread_job->flags.in_use	= 0;
 		thread_job->flags.finished	= 1;
 
-		KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_DEBUG, LOGCOLOR_YELLOW, "Thread ID [%d] - Finished JOB_ID [%d] - NOTIFY BEGIN\n",
+		KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_INFO, LOGCOLOR_YELLOW, "Thread ID [%d] - Finished JOB_ID [%d] - NOTIFY BEGIN\n",
 				thread_instance->thread_id_pool, thread_job->job_id);
 
 		/* Add into done queue for further caller examination - WARNING: DO NOT TOUCH THREAD_JOB ANYMORE ONCE YOU DO THIS LIST SWITCH */
@@ -572,7 +600,7 @@ static void *ThreadPoolInstanceMainLoop(void *thread_instance_ptr)
 		thread_job->flags.in_use	= 0;
 		thread_job->flags.finished	= 1;
 
-		KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_DEBUG, LOGCOLOR_YELLOW, "Thread ID [%d] - Finished JOB_ID [%d] - CLEAN UP\n",
+		KQBASE_LOG_PRINTF(thread_pool->log_base, LOGTYPE_INFO, LOGCOLOR_YELLOW, "Thread ID [%d] - Finished JOB_ID [%d] - CLEAN UP\n",
 				thread_instance->thread_id_pool, thread_job->job_id);
 
 		/* Release SLOT */

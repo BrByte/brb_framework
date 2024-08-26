@@ -104,7 +104,7 @@ int CommEvTCPClientPoolDestroy(CommEvTCPClientPool *tcp_clientpool)
 	for (i = 0; i < tcp_clientpool->client.count_init; i++)
 	{
 		ev_tcpclient = MemSlotBaseSlotGrabByID(&tcp_clientpool->client.memslot, i);
-		CommEvTCPClientClean(ev_tcpclient);
+		CommEvTCPClientShutdown(ev_tcpclient);
 		continue;
 	}
 

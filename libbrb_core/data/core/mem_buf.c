@@ -128,6 +128,9 @@ int MemBufferShrink(MemBuffer *mb_ptr)
 	/* Better safe than sorry */
 	MemBufferPutNULLTerminator(mb_ptr);
 
+	if (mb_ptr->size <= 1)
+		return 0;
+
 	/* Shrink buffer size to smallest possible */
 	BRB_REALLOC(mb_ptr->data, mb_ptr->data, (mb_ptr->size + 1) * sizeof(char));
 
@@ -386,7 +389,7 @@ unsigned long MemBufferOverwrite(MemBuffer *mb_ptr, void *new_data, unsigned lon
 	return (mb_ptr->size);
 }
 /**************************************************************************************************************************/
-unsigned long MemBufferAdd(MemBuffer *mb_ptr, void *new_data, unsigned long new_data_sz)
+unsigned long MemBufferAdd(MemBuffer *mb_ptr, const void *new_data, unsigned long new_data_sz)
 {
 	void *base_ptr = NULL;
 
@@ -451,7 +454,7 @@ MemBuffer *MemBufferMerge(MemBuffer *mb1_ptr, MemBuffer *mb2_ptr)
 /**************************************************************************************************************************/
 int MemBufferPrintf(MemBuffer *mb_ptr, char *message, ...)
 {
-	char fmt_buf[MEMBUFFER_MAX_PRINTF];
+	char fmt_buf[MEMBUFFER_MAX_PRINTF] = {0};
 	va_list args;
 	int msg_len;
 
@@ -474,6 +477,9 @@ int MemBufferPrintf(MemBuffer *mb_ptr, char *message, ...)
 		/* Set new alloc size to replace default */
 		alloc_sz	= (msg_len + 16);
 		buf_ptr		= malloc(alloc_sz);
+		if (!buf_ptr)
+			return 0;
+		memset(buf_ptr, 0, alloc_sz);
 		msg_malloc	= 1;
 	}
 
@@ -497,7 +503,7 @@ int MemBufferPrintf(MemBuffer *mb_ptr, char *message, ...)
 	return 1;
 }
 /**************************************************************************************************************************/
-int MemBufferSyncWriteToFile(MemBuffer *mb_ptr, char *filepath)
+int MemBufferSyncWriteToFile(MemBuffer *mb_ptr, const char *filepath)
 {
 	void *data_ptr;
 	unsigned long data_sz;
@@ -544,7 +550,7 @@ int MemBufferSyncWriteToFile(MemBuffer *mb_ptr, char *filepath)
 	return 1;
 }
 /**************************************************************************************************************************/
-int MemBufferWriteToFile(MemBuffer *mb_ptr, char *filepath)
+int MemBufferWriteToFile(MemBuffer *mb_ptr, const char *filepath)
 {
 	unsigned long data_sz;
 	void *data_ptr;
@@ -671,7 +677,7 @@ int MemBufferPWriteToFile(MemBuffer *mb_ptr, unsigned long mb_offset, unsigned l
 	return op_status;
 }
 /**************************************************************************************************************************/
-int MemBufferOffsetWriteToFile(MemBuffer *mb_ptr, unsigned long offset, char *filepath)
+int MemBufferOffsetWriteToFile(MemBuffer *mb_ptr, unsigned long offset, const char *filepath)
 {
 	unsigned long data_sz;
 	int fd;
@@ -717,7 +723,7 @@ int MemBufferOffsetWriteToFile(MemBuffer *mb_ptr, unsigned long offset, char *fi
 	return 1;
 }
 /**************************************************************************************************************************/
-int MemBufferMmapWriteToFile(MemBuffer *mb_ptr, char *filepath)
+int MemBufferMmapWriteToFile(MemBuffer *mb_ptr, const char *filepath)
 {
 	void *data_ptr;
 	unsigned long data_sz;
@@ -810,7 +816,7 @@ int MemBufferMmapWriteToFile(MemBuffer *mb_ptr, char *filepath)
 	return 0;
 }
 /**************************************************************************************************************************/
-MemBuffer *MemBufferMmapFile(char *filepath)
+MemBuffer *MemBufferMmapFile(const char *filepath)
 {
 	MemBuffer *mb_ptr;
 	void *mmap_ptr;
@@ -876,7 +882,7 @@ MemBuffer *MemBufferMmapFile(char *filepath)
 	return mb_ptr;
 }
 /**************************************************************************************************************************/
-MemBuffer *MemBufferReadOnlyMmapFile(char *filepath)
+MemBuffer *MemBufferReadOnlyMmapFile(const char *filepath)
 {
 	MemBuffer *mb_ptr;
 	void *mmap_ptr;
@@ -942,7 +948,7 @@ MemBuffer *MemBufferReadOnlyMmapFile(char *filepath)
 	return mb_ptr;
 }
 /**************************************************************************************************************************/
-MemBuffer *MemBufferReadFromFile(char *filepath)
+MemBuffer *MemBufferReadFromFile(const char *filepath)
 {
 	MemBuffer *mb_ptr;
 	struct stat file_stat;
@@ -1017,7 +1023,7 @@ MemBuffer *MemBufferReadFromFile(char *filepath)
 	return mb_ptr;
 }
 /**************************************************************************************************************************/
-MemBuffer *MemBufferReadFromBigFile(char *filepath)
+MemBuffer *MemBufferReadFromBigFile(const char *filepath)
 {
 	MemBuffer *mb_ptr;
 	struct stat file_stat;
@@ -1094,7 +1100,7 @@ MemBuffer *MemBufferReadFromBigFile(char *filepath)
 	return mb_ptr;
 }
 /**************************************************************************************************************************/
-long MemBufferReadFromFileOffseted(MemBuffer *mb_ptr, unsigned long file_offset, long data_sz, char *filepath)
+long MemBufferReadFromFileOffseted(MemBuffer *mb_ptr, unsigned long file_offset, long data_sz, const char *filepath)
 {
 	struct stat file_stat;
 	unsigned long file_sz;

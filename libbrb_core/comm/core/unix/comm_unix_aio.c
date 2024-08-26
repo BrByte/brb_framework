@@ -180,15 +180,18 @@ int CommEvUNIXIOControlDataProcess(EvKQBase *ev_base, CommEvUNIXIOData *iodata, 
 /**************************************************************************************************************************/
 int CommEvUNIXIOReadRaw(EvKQBase *ev_base, CommEvUNIXIOData *io_data, int socket_fd, int can_read_sz)
 {
-	char read_buffer[COMM_UNIX_READ_BUFFER_SIZE];
-	struct cmsghdr *cmsg;
-	struct msghdr	msghdr;
-	struct iovec	iov [2];
+	char read_buffer[COMM_UNIX_READ_BUFFER_SIZE] = {0};
+	struct cmsghdr *cmsg 	= NULL;
+	struct msghdr	msghdr 	= {0};
+	struct iovec	iov[2] 	= {0};
 	int read_bytes;
 
 	/* Sanity check */
 	if (can_read_sz <= 0)
 		return 0;
+
+	memset(&msghdr, 0, sizeof(msghdr));
+	memset(iov, 0, sizeof(iov));
 
 	/* Load up IOV base */
 	iov[0].iov_base			= &read_buffer;
@@ -213,9 +216,12 @@ int CommEvUNIXIOReadRaw(EvKQBase *ev_base, CommEvUNIXIOData *io_data, int socket
 	if (!io_data->read.data_mb)
 		io_data->read.data_mb = MemBufferNew(BRBDATA_THREAD_UNSAFE, 4096);
 
+	/* Fail or not read info */
+	if (read_bytes <= 0)
+		return read_bytes;
+
 	/* Append data to READ_MB */
 	MemBufferAdd(io_data->read.data_mb, read_buffer, read_bytes);
-
 
 	return read_bytes;
 }
@@ -223,11 +229,11 @@ int CommEvUNIXIOReadRaw(EvKQBase *ev_base, CommEvUNIXIOData *io_data, int socket
 int CommEvUNIXIORead(EvKQBase *ev_base, CommEvUNIXIOData *io_data, int socket_fd, int can_read_sz)
 {
 	EvBaseKQFileDesc *kq_fd;
-	CommEvUNIXControlData *control_data;
-	char read_buffer[COMM_UNIX_READ_BUFFER_SIZE];
-	struct cmsghdr *cmsg;
-	struct msghdr	msghdr;
-	struct iovec	iov [2];
+	CommEvUNIXControlData *control_data 			= NULL;
+	char read_buffer[COMM_UNIX_READ_BUFFER_SIZE] 	= {0};
+	struct cmsghdr *cmsg 	= NULL;
+	struct msghdr	msghdr 	= {0};
+	struct iovec	iov [2] = {0};
 	int *fd_arr;
 	int i, j;
 
@@ -436,11 +442,11 @@ int CommEvUNIXIOWriteRaw(EvKQBase *ev_base, CommEvUNIXWriteRequest *write_req, i
 /**************************************************************************************************************************/
 int CommEvUNIXIOWrite(EvKQBase *ev_base, CommEvUNIXWriteRequest *write_req, int socket_fd)
 {
-	CommEvUNIXControlData control_data;
-	struct cmsghdr *cmsg;
-	struct msghdr msghdr;
-	struct iovec iov[2];
-	int *fd_arr;
+	CommEvUNIXControlData control_data 	= {0};
+	struct cmsghdr *cmsg 	= NULL;
+	struct msghdr msghdr 	= {0};
+	struct iovec iov[2] 	= {0};
+	int *fd_arr 	= NULL;
 	int wrote_bytes = 0;
 	int wrote_total = 0;
 	int i;
@@ -518,18 +524,14 @@ int CommEvUNIXIOWrite(EvKQBase *ev_base, CommEvUNIXWriteRequest *write_req, int 
 				wrote_bytes, write_req->data.offset, write_req->data.remain, (wrote_bytes < 0) ? errno : 0);
 
 		/* Touch sequence ID and offset */
-		if (wrote_bytes > 0)
-		{
-			assert(wrote_bytes >= sizeof(CommEvUNIXControlData));
-
-			write_req->data.offset += (wrote_bytes - sizeof(CommEvUNIXControlData));
-			write_req->data.remain -= (wrote_bytes - sizeof(CommEvUNIXControlData));
-			write_req->data.seq_id++;
-		}
-		else
-		{
+		if (wrote_bytes <= 0)
 			return 0;
-		}
+
+		assert(wrote_bytes >= sizeof(CommEvUNIXControlData));
+
+		write_req->data.offset += (wrote_bytes - sizeof(CommEvUNIXControlData));
+		write_req->data.remain -= (wrote_bytes - sizeof(CommEvUNIXControlData));
+		write_req->data.seq_id++;
 
 		//		if (write_req->data.remain <= 0)
 		//			return wrote_total;
@@ -575,9 +577,9 @@ int CommEvUNIXIOWrite(EvKQBase *ev_base, CommEvUNIXWriteRequest *write_req, int 
 int CommEvUNIXIOReplyACK(CommEvUNIXACKReply *ack_reply, int socket_fd)
 {
 	CommEvUNIXControlData control_data;
-	struct cmsghdr *cmsg;
-	struct msghdr	msghdr;
-	struct iovec	iov [1];
+	struct cmsghdr *cmsg 	= NULL;
+	struct msghdr	msghdr 	= {0};
+	struct iovec	iov [2] = {0};
 	int wrote_bytes;
 
 	/* Clean our MSG header structure */

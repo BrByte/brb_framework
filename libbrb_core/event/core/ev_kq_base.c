@@ -32,7 +32,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "../include/libbrb_ev_kq.h"
+#include "../include/libbrb_core.h"
 
 /* Private prototypes */
 static int EvKQInvokeKQFDCallbacks(EvKQBase *kq_base, long invoke_ts);
@@ -42,6 +42,7 @@ static void EvKQBaseEnqueueEvChg(EvKQBase *kq_base, unsigned int fd, int ev_type
 static void EvKQBaseUpdateReadEvent(EvKQBase *kq_base, int fd, int action, EvBaseKQCBH *cb_handler, void *cb_data);
 static void EvKQBaseUpdateWriteEvent(EvKQBase *kq_base, int fd, int action, EvBaseKQCBH *cb_handler, void *cb_data);
 static void EvKQBaseUpdateFileMonEvent(EvKQBase *kq_base, int fd, int action, EvBaseKQCBH *cb_handler, void *cb_data);
+static void EvKQBaseUpdateFSEvent(EvKQBase *kq_base, int fd, int action, EvBaseKQCBH *cb_handler, void *cb_data);
 static void EvKQBaseUpdateEOFEvent(EvKQBase *kq_base, int fd, int action, EvBaseKQCBH *cb_handler, void *cb_data);
 static void EvKQBaseUpdateErrorEvent(EvKQBase *kq_base, int fd, int action, EvBaseKQCBH *cb_handler, void *cb_data);
 static void EvKQBaseUpdateDeferCheckReadEvent(EvKQBase *kq_base, int fd, int action, EvBaseKQCBH *cb_handler, void *cb_data);
@@ -120,6 +121,7 @@ EvKQBase *EvKQBaseNew(EvKQBaseConf *kq_conf)
 	kq_base->kq_conf.onoff.close_linger			= ((kq_conf && kq_conf->onoff.close_linger) ? 1 : 0);
 
 	/* Get monotonic TIMESPEC */
+	gettimeofday(&kq_base->stats.cur_invoke_tv, NULL);
 	clock_gettime(CLOCK_MONOTONIC, &kq_base->stats.monotonic_tp);
 
 	/* Initialize DEFER and REG_OBJ lists */
@@ -394,6 +396,13 @@ void EvKQBaseSetEvent(EvKQBase *kq_base, int fd, int ev_type, int action, EvBase
 		break;
 	}
 	/******************************************************************/
+	case COMM_EV_FS:
+	{
+		/* Update events for VNODE filter */
+		EvKQBaseUpdateFSEvent(kq_base, fd, action, cb_handler, cb_data);
+		break;
+	}
+	/******************************************************************/
 	case COMM_EV_EOF:
 	{
 		/* Update events for EOF filter */
@@ -422,8 +431,6 @@ void EvKQBaseSetEvent(EvKQBase *kq_base, int fd, int ev_type, int action, EvBase
 		break;
 	}
 	/******************************************************************/
-
-
 	}
 
 	return;
@@ -468,65 +475,11 @@ void EvKQBaseAdjustIOLoopTimeout(EvKQBase *kq_base, int interval_ms)
 int EvKQBaseDispatchEventWrite(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd, int data_size)
 {
 	return EvKQBaseFDEventInvoke(kq_base, kq_fd, KQ_CB_HANDLER_WRITE, data_size, -1, kq_base);
-
-//	EvBaseKQGenericEventPrototype *ev_proto	= &kq_fd->cb_handler[KQ_CB_HANDLER_WRITE];
-//	EvBaseKQCBH *write_cb_handler			= ev_proto->cb_handler_ptr;
-//	void *write_cb_data						= ev_proto->cb_data_ptr;
-//	int has_write_ev						= ev_proto->flags.enabled;
-//	int data_write							= 0;
-//
-//	/* Disabled event or no CB_H, bail out */
-//	if ((!ev_proto->flags.enabled) || (!write_cb_handler))
-//		return 0;
-//
-//	/* Touch time_stamp */
-//	memcpy(&ev_proto->run.tv, &kq_base->stats.cur_invoke_tv, sizeof(struct timeval));
-//
-//	/* Disable any timeout related info */
-//	EvKQBaseTimeoutClearByKQFD(kq_base, kq_fd, COMM_EV_TIMEOUT_WRITE);
-//	EvKQBaseTimeoutClearByKQFD(kq_base, kq_fd, COMM_EV_TIMEOUT_BOTH);
-//
-//	/* Volatile event, un_mark write_enabled flag */
-//	if (!ev_proto->flags.persist)
-//		ev_proto->flags.enabled	= 0;
-//
-//	/* Invoke the call_back handler */
-//	if ((data_size > 0) && (has_write_ev))
-//		data_write = write_cb_handler(kq_fd->fd.num, data_size, -1, write_cb_data, kq_base);
-//
-//	return data_write;
 }
 /**************************************************************************************************************************/
 int EvKQBaseDispatchEventRead(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd, int data_size)
 {
 	return EvKQBaseFDEventInvoke(kq_base, kq_fd, KQ_CB_HANDLER_READ, data_size, -1, kq_base);
-
-//	EvBaseKQGenericEventPrototype *ev_proto	= &kq_fd->cb_handler[KQ_CB_HANDLER_READ];
-//	EvBaseKQCBH *read_cb_handler			= ev_proto->cb_handler_ptr;
-//	void *read_cb_data						= ev_proto->cb_data_ptr;
-//	int has_read_ev							= ev_proto->flags.enabled;
-//	int data_read							= 0;
-//
-//	/* Disabled event or no CB_H, bail out */
-//	if ((!ev_proto->flags.enabled) || (!read_cb_handler))
-//		return 0;
-//
-//	/* Touch time_stamp */
-//	memcpy(&ev_proto->run.tv, &kq_base->stats.cur_invoke_tv, sizeof(struct timeval));
-//
-//	/* Disable any timeout related info */
-//	EvKQBaseTimeoutClearByKQFD(kq_base, kq_fd, COMM_EV_TIMEOUT_READ);
-//	EvKQBaseTimeoutClearByKQFD(kq_base, kq_fd, COMM_EV_TIMEOUT_BOTH);
-//
-//	/* Volatile event, un_mark read_enabled flag */
-//	if (!ev_proto->flags.persist)
-//		ev_proto->flags.enabled	= 0;
-//
-//	/* Invoke the call_back handler */
-//	if ((data_size > 0) && (has_read_ev))
-//		data_read = read_cb_handler(kq_fd->fd.num, data_size, -1, read_cb_data, kq_base);
-//
-//	return data_read;
 }
 /**************************************************************************************************************************/
 int EvKQBaseDispatchEventWriteEOF(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd, int data_size)
@@ -544,47 +497,11 @@ int EvKQBaseDispatchEventWriteEOF(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd, in
 int EvKQBaseDispatchEventReadEOF(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd, int data_size)
 {
 	return EvKQBaseFDEventInvoke(kq_base, kq_fd, KQ_CB_HANDLER_EOF, data_size, -1, kq_base);
-
-//	EvBaseKQGenericEventPrototype *ev_proto	= &kq_fd->cb_handler[KQ_CB_HANDLER_EOF];
-//	EvBaseKQCBH *eof_cb_handler				= ev_proto->cb_handler_ptr;
-//	void *eof_cb_data						= ev_proto->cb_data_ptr;
-//	int data_read							= 0;
-//
-//	/* Disabled event or no CB_H, bail out */
-//	if ((!ev_proto->flags.enabled) || (!eof_cb_handler))
-//		return 0;
-//
-//	/* Volatile event, un_mark read_enabled flag */
-//	if (!ev_proto->flags.persist)
-//		ev_proto->flags.enabled	= 0;
-//
-//	/* Invoke the call_back handler */
-//	data_read = eof_cb_handler(kq_fd->fd.num, data_size, -1, eof_cb_data, kq_base);
-//
-//	return data_read;
 }
 /**************************************************************************************************************************/
 int EvKQBaseDispatchEventReadError(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd, int data_size)
 {
 	return EvKQBaseFDEventInvoke(kq_base, kq_fd, KQ_CB_HANDLER_READ_ERROR, data_size, -1, kq_base);
-
-//	EvBaseKQGenericEventPrototype *ev_proto	= &kq_fd->cb_handler[KQ_CB_HANDLER_READ_ERROR];
-//	EvBaseKQCBH *error_cb_handler			= ev_proto->cb_handler_ptr;
-//	void *error_cb_data						= ev_proto->cb_data_ptr;
-//	int data_read							= 0;
-//
-//	/* Disabled event or no CB_H, bail out */
-//	if ((!ev_proto->flags.enabled) || (!error_cb_handler))
-//		return 0;
-//
-//	/* Volatile event, un_mark read_enabled flag */
-//	if (!ev_proto->flags.persist)
-//		ev_proto->flags.enabled	= 0;
-//
-//	/* Invoke the call_back handler */
-//	data_read = error_cb_handler(kq_fd->fd.num, data_size, -1, error_cb_data, kq_base);
-//
-//	return data_read;
 }
 /**************************************************************************************************************************/
 int EvKQBaseAssert(EvKQBase *kq_base, const char *func_str, char *file_str, int line, char *msg, ...)
@@ -625,7 +542,7 @@ int EvKQBaseAssert(EvKQBase *kq_base, const char *func_str, char *file_str, int 
 		va_end(args);
 
 		/* Dump assert MESSAGE and begin DUMP logs if operator asked us to */
-		EvKQBaseLoggerAdd(log_base, LOGTYPE_CRITICAL, LOGCOLOR_RED, file_str, func_str, line, assert_str);
+		EvKQBaseLoggerAdd(log_base, 0, LOGTYPE_CRITICAL, LOGCOLOR_RED, file_str, func_str, line, assert_str);
 		EvKQBaseLoggerMemDumpOnCrash(log_base);
 	}
 
@@ -687,8 +604,11 @@ static int EvKQInvokeKQFDCallbacks(EvKQBase *kq_base, long invoke_ts)
 		if ((EVFILT_SIGNAL != target_filter) && (EVFILT_TIMER != target_filter) && (EVFILT_AIO != target_filter))
 		{
 			/* Grab KQ_FD from internal arena and LOCK it, while we process the CB functions */
-			kq_fd		= EvKQBaseFDGrabFromArena(kq_base, target_fd);
+			kq_fd				= EvKQBaseFDGrabFromArena(kq_base, target_fd);
 			MemArenaLockByID(kq_base->fd.arena, kq_fd->fd.num);
+
+			/* Copy flags */
+			kq_fd->fd.fflags	= target_fflags;
 		}
 
 		/* Grab event filter */
@@ -705,9 +625,10 @@ static int EvKQInvokeKQFDCallbacks(EvKQBase *kq_base, long invoke_ts)
 			kq_fd->flags.so_read_error	= (target_flags & EV_ERROR) ? 1 : 0;
 
 			KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN,
-					"FD [%d] - Read event of [%d] bytes - CB_FUNC [%p] - PERSIST [%d] - ENABLED [%d] - EOF [%d] - DEFER [%d] - CLOSED [%d / %d]\n",
+					"FD [%d] - Read event of [%d] bytes - CB_FUNC [%p] - PERSIST [%d] - ENABLED [%d] - EOF [%d] - DEFER [%d] - CLOSED [%d / %d] - FLAGS [%u]-[%u]\n",
 					target_fd, target_int_data, kq_fd->cb_handler[KQ_CB_HANDLER_READ].cb_handler_ptr, kq_fd->cb_handler[KQ_CB_HANDLER_READ].flags.persist,
-					kq_fd->cb_handler[KQ_CB_HANDLER_READ].flags.enabled, kq_fd->flags.so_read_eof, kq_fd->flags.defer_read, kq_fd->flags.closed, kq_fd->flags.closing);
+					kq_fd->cb_handler[KQ_CB_HANDLER_READ].flags.enabled, kq_fd->flags.so_read_eof, kq_fd->flags.defer_read, kq_fd->flags.closed, kq_fd->flags.closing,
+					kev_ptr[i].flags, kev_ptr[i].fflags);
 
 			/* Event is disabled, bail out */
 			if (!ev_proto->flags.enabled)
@@ -808,6 +729,36 @@ static int EvKQInvokeKQFDCallbacks(EvKQBase *kq_base, long invoke_ts)
 				/* Mark new state */
 				kq_fd->cb_handler[KQ_CB_HANDLER_FILEMON].flags.enabled = 0;
 				kq_fd->cb_handler[KQ_CB_HANDLER_FILEMON].flags.persist = 0;
+			}
+
+			if (filemon_cb_handler)
+				filemon_cb_handler(target_fd, target_fflags, -1, filemon_cb_data, kq_base);
+
+			break;
+		}
+		/******************************************************************/
+		case EVFILT_FS:
+		{
+			/* Grab EV_PROTOTYPE from within it */
+			ev_proto	= &kq_fd->cb_handler[KQ_CB_HANDLER_FS];
+
+			KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_INFO, LOGCOLOR_CYAN, "FD [%d] - [%s] - FS EVENT - INT_DATA [%d] - FLAGS [%d] - FFLAGS [%d] - KEV_ERROR [%d]\n",
+					target_fd, EvKQBaseFDDescriptionGetByFD(kq_base, target_fd), target_int_data, kev_ptr[i].flags,
+					target_fflags, (target_flags & EV_ERROR), (kev_ptr[i].flags & EV_EOF));
+
+			filemon_cb_handler	= kq_fd->cb_handler[KQ_CB_HANDLER_FS].cb_handler_ptr;
+			filemon_cb_data		= kq_fd->cb_handler[KQ_CB_HANDLER_FS].cb_data_ptr;
+
+			/* Volatile event, un_mark has_write and write_ev_enabled */
+			if (!kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.persist)
+			{
+				/* NULLify cb_handlers */
+				kq_fd->cb_handler[KQ_CB_HANDLER_FS].cb_handler_ptr = NULL;
+				kq_fd->cb_handler[KQ_CB_HANDLER_FS].cb_data_ptr = NULL;
+
+				/* Mark new state */
+				kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.enabled = 0;
+				kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.persist = 0;
 			}
 
 			if (filemon_cb_handler)
@@ -1020,36 +971,83 @@ static void EvKQBaseEnqueueEvChg(EvKQBase *kq_base, unsigned int fd, int ev_type
 		/***********************************************/
 		case COMM_ACTION_DELETE:
 		{
+			// TODO, change this in others NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME
 			/* Fill kev_ptr index */
-			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_VNODE, EV_DELETE, (NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME), 0, udata);
+			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_VNODE, EV_DELETE, (NOTE_DELETE | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME), 0, udata);
 			break;
 		}
 		/***********************************************/
 		case COMM_ACTION_ADD_PERSIST:
 		{
 			/* Fill kev_ptr index */
-			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_VNODE, EV_ADD, (NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME), 0, udata);
+			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_VNODE, EV_ADD, (NOTE_DELETE | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME), 0, udata);
 			break;
 		}
 		/***********************************************/
 		case COMM_ACTION_ADD_VOLATILE:
 		{
 			/* Fill kev_ptr index */
-			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_VNODE, (EV_ADD | EV_ONESHOT), (NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME), 0, udata);
+			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_VNODE, (EV_ADD | EV_ONESHOT), (NOTE_DELETE | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME), 0, udata);
 			break;
 		}
 		/***********************************************/
 		case COMM_ACTION_ENABLE:
 		{
 			/* Fill kev_ptr index */
-			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_VNODE, EV_ENABLE, (NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME), 0, udata);
+			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_VNODE, EV_ENABLE, (NOTE_DELETE | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME), 0, udata);
 			break;
 		}
 		/***********************************************/
 		case COMM_ACTION_DISABLE:
 		{
 			/* Fill kev_ptr index */
-			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_VNODE, EV_DISABLE, (NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME), 0, udata);
+			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_VNODE, EV_DISABLE, (NOTE_DELETE | NOTE_ATTRIB | NOTE_LINK | NOTE_RENAME), 0, udata);
+			break;
+		}
+		/***********************************************/
+		}
+
+		break;
+	}
+	/******************************************************************/
+	case COMM_EV_FS:
+	{
+
+		switch (action)
+		{
+		/***********************************************/
+		case COMM_ACTION_DELETE:
+		{
+			/* Fill kev_ptr index */
+			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_FS, EV_DELETE, 0, 0, udata);
+			break;
+		}
+		/***********************************************/
+		case COMM_ACTION_ADD_PERSIST:
+		{
+			/* Fill kev_ptr index */
+			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_FS, EV_ADD, 0, 0, udata);
+			break;
+		}
+		/***********************************************/
+		case COMM_ACTION_ADD_VOLATILE:
+		{
+			/* Fill kev_ptr index */
+			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_FS, (EV_ADD | EV_ONESHOT), 0, 0, udata);
+			break;
+		}
+		/***********************************************/
+		case COMM_ACTION_ENABLE:
+		{
+			/* Fill kev_ptr index */
+			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_FS, EV_ENABLE, 0, 0, udata);
+			break;
+		}
+		/***********************************************/
+		case COMM_ACTION_DISABLE:
+		{
+			/* Fill kev_ptr index */
+			EV_SET(kev_ptr, (uintptr_t) fd, EVFILT_FS, EV_DISABLE, 0, 0, udata);
 			break;
 		}
 		/***********************************************/
@@ -1778,6 +1776,116 @@ static void EvKQBaseUpdateFileMonEvent(EvKQBase *kq_base, int fd, int action, Ev
 
 			/* Mark new state */
 			kq_fd->cb_handler[KQ_CB_HANDLER_FILEMON].flags.enabled = 0;
+		}
+		break;
+	}
+	/******************************************************************/
+	}
+
+	return;
+}
+/**************************************************************************************************************************/
+static void EvKQBaseUpdateFSEvent(EvKQBase *kq_base, int fd, int action, EvBaseKQCBH *cb_handler, void *cb_data)
+{
+	EvBaseKQFileDesc *kq_fd;
+
+	/* Grab FD from reference table */
+	kq_fd = EvKQBaseFDGrabFromArena(kq_base, fd);
+
+	switch (action)
+	{
+	/******************************************************************/
+	/* Action is ADD_VOLATILE. Check for valid cb_handler and cb_data and enqueue change
+	/******************************************************************/
+	case COMM_ACTION_ADD_VOLATILE:
+	{
+		/* We have a valid cb_handler pointer. Fill in FD call_backs */
+		if (cb_handler)
+		{
+			kq_fd->cb_handler[KQ_CB_HANDLER_FS].cb_handler_ptr	= cb_handler;
+			kq_fd->cb_handler[KQ_CB_HANDLER_FS].cb_data_ptr	= cb_data;
+
+			/* Mark new state */
+			kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.enabled = 1;
+			kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.persist = 0;
+
+			/* Enqueue event change - Send kq_base as user_data */
+			EvKQBaseEnqueueEvChg(kq_base, fd, COMM_EV_FS, action, kq_base);
+		}
+
+		break;
+	}
+	/******************************************************************/
+	/* Action is ADD_PERSIST. Check for valid cb_handler and cb_data and enqueue change
+	/******************************************************************/
+	case COMM_ACTION_ADD_PERSIST:
+	{
+		/* We have a valid cb_handler pointer. Fill in FD call_backs */
+		if (cb_handler)
+		{
+			kq_fd->cb_handler[KQ_CB_HANDLER_FS].cb_handler_ptr	= cb_handler;
+			kq_fd->cb_handler[KQ_CB_HANDLER_FS].cb_data_ptr	= cb_data;
+
+			/* Mark new state */
+			kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.enabled = 1;
+			kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.persist = 1;
+
+			/* Enqueue event change - Send kq_base as user_data */
+			EvKQBaseEnqueueEvChg(kq_base, fd, COMM_EV_FS, action, kq_base);
+		}
+
+		break;
+	}
+	/******************************************************************/
+	/* Action is DELETE. Clear cb_handler and cb_data
+	/******************************************************************/
+	case COMM_ACTION_DELETE:
+	{
+		/* Just enqueue DELETE if enabled */
+		if (kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.enabled)
+		{
+			/* Enqueue event change */
+			EvKQBaseEnqueueEvChg(kq_base, fd, COMM_EV_FS, action, kq_base);
+		}
+
+		kq_fd->cb_handler[KQ_CB_HANDLER_FS].cb_handler_ptr	= NULL;
+		kq_fd->cb_handler[KQ_CB_HANDLER_FS].cb_data_ptr	= NULL;
+
+		/* Mark new state */
+		kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.enabled = 0;
+		kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.persist = 0;
+		break;
+
+	}
+	/******************************************************************/
+	/* Action is ENABLE. Mark it
+	/******************************************************************/
+	case COMM_ACTION_ENABLE:
+	{
+		/* If not enabled, enqueue an enable event to change list */
+		if (!kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.enabled)
+		{
+			/* Enqueue event change */
+			EvKQBaseEnqueueEvChg(kq_base, fd, COMM_EV_FS, action, kq_base);
+
+			/* Mark new state */
+			kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.enabled = 1;
+		}
+		break;
+	}
+	/******************************************************************/
+	/* Action is DISABLE. Mark it
+	/******************************************************************/
+	case COMM_ACTION_DISABLE:
+	{
+		/* If not disabled, enqueue a disable event to change list */
+		if (kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.enabled)
+		{
+			/* Enqueue event change */
+			EvKQBaseEnqueueEvChg(kq_base, fd, COMM_EV_FS, action, kq_base);
+
+			/* Mark new state */
+			kq_fd->cb_handler[KQ_CB_HANDLER_FS].flags.enabled = 0;
 		}
 		break;
 	}

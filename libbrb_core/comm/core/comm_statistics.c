@@ -335,4 +335,28 @@ char *CommEvStatisticsUptimeHumanize(long total_sec, char *buf_ptr, int buf_maxs
 	return buf_ptr;
 }
 /**************************************************************************************************************************/
+void CommEvStatisticsClean(CommEvStatistics *statistics)
+{
+	/* Reset time stamps and values */
+	memset(&statistics->last_read_tv, 0, sizeof(statistics->last_read_tv));
+	memset(&statistics->last_write_tv, 0, sizeof(statistics->last_write_tv));
+	memset(&statistics->last_user_tv, 0, sizeof(statistics->last_user_tv));
 
+	statistics->last_read_ts	= 0;
+	statistics->last_write_ts	= 0;
+	statistics->last_user_ts	= 0;
+
+	/* Clean up total and rates */
+	memset(&statistics->total, 0, sizeof(statistics->total));
+	memset(&statistics->rate, 0, sizeof(statistics->rate));
+
+	return;
+}
+/**************************************************************************************************************************/
+void CommEvStatisticsRateClean(CommEvStatistics *statistics)
+{
+	/* Clean up rates */
+	memset(&statistics->rate, 0, sizeof(statistics->rate));
+	return;
+}
+/**************************************************************************************************************************/

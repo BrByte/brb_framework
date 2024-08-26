@@ -199,3 +199,19 @@ void BrbSha1_Final(BrbSha1Ctx* context, uint8_t digest[BRB_SHA1_DIGEST_SIZE])
 #endif
 }
 /**************************************************************************************************************************/
+/* SHA1 - One step */
+int BrbSha1_Do(const uint8_t *in_ptr, int in_len, char *dig_str)
+{
+	/* Sanitize */
+	if (!in_ptr || !dig_str)
+		return -1;
+
+	BrbSha1Ctx sha1_ctx;
+
+    BrbSha1_Init(&sha1_ctx);
+    BrbSha1_Update(&sha1_ctx, in_ptr, in_len);
+    BrbSha1_Final(&sha1_ctx, dig_str);
+
+	return 0;
+}
+/**************************************************************************************************************************/

@@ -33,6 +33,20 @@
  */
 
 #include <libbrb_core.h>
+#include <sys/wait.h>
+
+#include <sys/mount.h>
+#if defined(__FreeBSD__)
+#if __FreeBSD_version >= 1401000
+#include <ufs/ufs/extattr.h>
+#include <ufs/ufs/quota.h>
+#endif
+#include <ufs/ufs/ufsmount.h>
+#endif
+
+#define THREAD_COMMAND_RM 	"/bin/rm"
+#define THREAD_COMMAND_CP 	"/bin/cp"
+#define THREAD_COMMAND_MV 	"/bin/mv"
 
 static ThreadInstanceJobCB_RetINT ThreadAIOEngine_JobDispatcher;
 static ThreadInstanceJobFinishCB ThreadAIOEngine_JobFinish;
@@ -47,10 +61,17 @@ static void ThreadAIOEngine_OpcodeWriteFromMemBuffer(ThreadAIOBase *thrd_aio_bas
 static void ThreadAIOEngine_OpcodeWrite(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
 static void ThreadAIOEngine_OpcodeStat(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
 static void ThreadAIOEngine_OpcodeUnlink(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
+static void ThreadAIOEngine_OpcodeRemove(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
 static void ThreadAIOEngine_OpcodeTruncate(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
-static void ThreadAIOEngine_OpcodeOpenDir(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
+static void ThreadAIOEngine_OpcodeRename(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
+static void ThreadAIOEngine_OpcodeCopy(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
+static void ThreadAIOEngine_OpcodeMove(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
 static void ThreadAIOEngine_OpcodeMount(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
 static void ThreadAIOEngine_OpcodeUnMount(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
+
+static void ThreadAIOEngine_OpcodeCustom(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req);
+
+static int ThreadAIOEngine_system(const char *command, char *const argv[]);
 
 /**************************************************************************************************************************/
 ThreadAIOBase *ThreadAIOBaseNew(EvKQBase *ev_base, ThreadAIOBaseConf *thrd_aio_base_conf)
@@ -153,7 +174,7 @@ int ThreadAIOFileOpen(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char 
 	aio_req->file.path_str		= strdup(path_str);
 	aio_req->file.flags			= flags;
 	aio_req->file.mode			= mode;
-	aio_req->flags.dup_path_str = 1;
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
 
 	/* Save pending request AIO_INFO */
 	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
@@ -276,7 +297,7 @@ int ThreadAIOFileReadToMemBuffer(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio
 	/* Create a MEMBUFFER to HOLD incoming data */
 	aio_req->data.ptr			= NULL;
 	aio_req->file.path_str		= (path_str ? strdup(path_str) : NULL);
-	aio_req->flags.dup_path_str = (path_str ? 1 : 0);
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
 
 	/* Set flags we are READING from a FILE with THREADED_AIO  */
 	aio_req->flags.aio_read		= 1;
@@ -458,7 +479,7 @@ int ThreadAIOFileWriteFromMemBuffer(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_
 	/* Create a MEMBUFFER to HOLD incoming data */
 	aio_req->data.ptr			= (char*)data_mb;
 	aio_req->file.path_str		= (path_str ? strdup(path_str) : NULL);
-	aio_req->flags.dup_path_str = (path_str ? 1 : 0);
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
 
 	/* Set flags we are WRITING to a FILE with THREADED_AIO */
 	aio_req->flags.aio_write	= 1;
@@ -484,13 +505,13 @@ int ThreadAIOFileWriteFromMemBuffer(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_
 	}
 
 	/* Touch statistics before finish check */
-	ev_base->stats.aio.opcode[AIOREQ_OPCODE_WRITE].bytes += size;
-	ev_base->stats.aio.opcode[AIOREQ_OPCODE_WRITE].tx_count++;
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_WRITE_MB].bytes += size;
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_WRITE_MB].tx_count++;
 	return AIOREQ_PENDING;
 
 	/* Touch statistics and leave */
 	aio_failed:
-	ev_base->stats.aio.opcode[AIOREQ_OPCODE_WRITE].error++;
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_WRITE_MB].error++;
 	return AIOREQ_FAILED;
 }
 /**************************************************************************************************************************/
@@ -588,7 +609,7 @@ int ThreadAIOFileStat(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char 
 
 	/* Populate STAT_SPECIFIC data */
 	aio_req->file.path_str		= strdup(path_str);
-	aio_req->flags.dup_path_str = 1;
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
 
 	/* Save pending request AIO_INFO */
 	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
@@ -646,7 +667,7 @@ int ThreadAIOFileUnlink(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, cha
 
 	/* Populate UNLINK_SPECIFIC data */
 	aio_req->file.path_str		= strdup(path_str);
-	aio_req->flags.dup_path_str = 1;
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
 
 	/* Save pending request AIO_INFO */
 	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
@@ -673,6 +694,64 @@ int ThreadAIOFileUnlink(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, cha
 	/* Touch statistics and leave */
 	aio_failed:
 	ev_base->stats.aio.opcode[AIOREQ_OPCODE_UNLINK].error++;
+	return AIOREQ_FAILED;
+}
+/**************************************************************************************************************************/
+int ThreadAIOFileRemove(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, EvAIOReqCBH *finish_cb, void *finish_cbdata)
+{
+	ThreadPoolJobProto job_proto;
+	EvAIOReq *aio_req;
+	int job_id;
+
+	EvKQBase *ev_base			= thrd_aio_base->ev_base;
+	EvAIOReqQueue *req_queue	= &thrd_aio_base->req_queue;
+
+	/* Create a new aio_request */
+	aio_req = EvAIOReqNew(&thrd_aio_base->req_queue, -1, thrd_aio_base, NULL, -1, -1, NULL, finish_cb, finish_cbdata);
+
+	/* No more available AIO_REQ */
+	if (!aio_req)
+	{
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "PATH [%s] - Too many enqueued AIO_REQs\n", path_str);
+		goto aio_failed;
+	}
+
+	/* AIO_REQ must be slotted and have an ID */
+	assert(aio_req->id >= 0);
+	assert(path_str);
+
+	/* Initialize a generic JOB PROTOTYPE for this AIO_REQ */
+	ThreadAIOEngine_JobGenericInitialize(thrd_aio_base, &job_proto, aio_req, AIOREQ_OPCODE_REMOVE);
+
+	/* Populate UNLINK_SPECIFIC data */
+	aio_req->file.path_str		= strdup(path_str);
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
+
+	/* Save pending request AIO_INFO */
+	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
+
+	/* Enqueue on REQ_QUEUE before THREAD ENQUEUE, remove later if JOB fail - Then, start running job on external THREAD CONTEXT  */
+	EvAIOReqQueueEnqueue(req_queue, aio_req);
+	job_id = ThreadPoolJobEnqueue(thrd_aio_base->thrd_pool, &job_proto);
+
+	/* No more available THREAD_JOBs */
+	if (job_id < 0)
+	{
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "PATH [%s] - Too many enqueued THREAD_JOBs\n", path_str);
+
+		/* Remove and destroy ITEM from AIO_QUEUE and destroy it */
+		EvAIOReqQueueRemoveItem(req_queue, aio_req);
+		EvAIOReqDestroy(aio_req);
+		goto aio_failed;
+	}
+
+	/* Touch statistics before finish check */
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_REMOVE].tx_count++;
+	return AIOREQ_PENDING;
+
+	/* Touch statistics and leave */
+	aio_failed:
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_REMOVE].error++;
 	return AIOREQ_FAILED;
 }
 /**************************************************************************************************************************/
@@ -704,7 +783,7 @@ int ThreadAIOFileTruncate(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, c
 
 	/* Populate TRUNCATE_SPECIFIC data */
 	aio_req->file.path_str		= strdup(path_str);
-	aio_req->flags.dup_path_str = 1;
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
 
 	/* Save pending request AIO_INFO */
 	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
@@ -731,6 +810,189 @@ int ThreadAIOFileTruncate(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, c
 	/* Touch statistics and leave */
 	aio_failed:
 	ev_base->stats.aio.opcode[AIOREQ_OPCODE_TRUNCATE].error++;
+	return AIOREQ_FAILED;
+}
+/**************************************************************************************************************************/
+int ThreadAIOFileRename(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, char *dst_str, EvAIOReqCBH *finish_cb, void *finish_cbdata)
+{
+	ThreadPoolJobProto job_proto;
+	EvAIOReq *aio_req;
+	int job_id;
+
+	EvKQBase *ev_base			= thrd_aio_base->ev_base;
+	EvAIOReqQueue *req_queue	= &thrd_aio_base->req_queue;
+
+	/* Create a new aio_request */
+	aio_req = EvAIOReqNew(&thrd_aio_base->req_queue, -1, thrd_aio_base, NULL, -1, -1, NULL, finish_cb, finish_cbdata);
+
+	/* No more available AIO_REQ */
+	if (!aio_req)
+	{
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "PATH [%s] - Too many enqueued AIO_REQs\n", path_str);
+		goto aio_failed;
+	}
+
+	/* AIO_REQ must be slotted and have an ID */
+	assert(aio_req->id >= 0);
+	assert(path_str);
+	assert(dst_str);
+
+	/* Initialize a generic JOB PROTOTYPE for this AIO_REQ */
+	ThreadAIOEngine_JobGenericInitialize(thrd_aio_base, &job_proto, aio_req, AIOREQ_OPCODE_RENAME);
+
+	/* Populate MOUNT_SPECIFIC data */
+	aio_req->file.path_str		= strdup(path_str);
+	aio_req->file.dev_str		= strdup(dst_str);
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
+	aio_req->flags.dup_dev_str 	= (aio_req->file.dev_str) ? 1 : 0;
+
+	/* Save pending request AIO_INFO */
+	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
+
+	/* Enqueue on REQ_QUEUE before THREAD ENQUEUE, remove later if JOB fail - Then, start running job on external THREAD CONTEXT  */
+	EvAIOReqQueueEnqueue(req_queue, aio_req);
+	job_id = ThreadPoolJobEnqueue(thrd_aio_base->thrd_pool, &job_proto);
+
+	/* No more available THREAD_JOBs */
+	if (job_id < 0)
+	{
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "PATH [%s] - Too many enqueued THREAD_JOBs\n", path_str);
+
+		/* Remove and destroy ITEM from AIO_QUEUE and destroy it */
+		EvAIOReqQueueRemoveItem(req_queue, aio_req);
+		EvAIOReqDestroy(aio_req);
+		goto aio_failed;
+	}
+
+	/* Touch statistics before finish check */
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_RENAME].tx_count++;
+	return AIOREQ_PENDING;
+
+	/* Touch statistics and leave */
+	aio_failed:
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_RENAME].error++;
+	return AIOREQ_FAILED;
+}
+/**************************************************************************************************************************/
+int ThreadAIOFileCopy(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, char *dst_str, EvAIOReqCBH *finish_cb, void *finish_cbdata)
+{
+	ThreadPoolJobProto job_proto;
+	EvAIOReq *aio_req;
+	int job_id;
+
+	EvKQBase *ev_base			= thrd_aio_base->ev_base;
+	EvAIOReqQueue *req_queue	= &thrd_aio_base->req_queue;
+
+	/* Create a new aio_request */
+	aio_req = EvAIOReqNew(&thrd_aio_base->req_queue, -1, thrd_aio_base, NULL, -1, -1, NULL, finish_cb, finish_cbdata);
+
+	/* No more available AIO_REQ */
+	if (!aio_req)
+	{
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "PATH [%s] - Too many enqueued AIO_REQs\n", path_str);
+		goto aio_failed;
+	}
+
+	/* AIO_REQ must be slotted and have an ID */
+	assert(aio_req->id >= 0);
+	assert(path_str);
+	assert(dst_str);
+
+	/* Initialize a generic JOB PROTOTYPE for this AIO_REQ */
+	ThreadAIOEngine_JobGenericInitialize(thrd_aio_base, &job_proto, aio_req, AIOREQ_OPCODE_COPY);
+
+	/* Populate MOUNT_SPECIFIC data */
+	aio_req->file.path_str		= strdup(path_str);
+	aio_req->file.dev_str		= strdup(dst_str);
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
+	aio_req->flags.dup_dev_str 	= (aio_req->file.dev_str) ? 1 : 0;
+
+	/* Save pending request AIO_INFO */
+	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
+
+	/* Enqueue on REQ_QUEUE before THREAD ENQUEUE, remove later if JOB fail - Then, start running job on external THREAD CONTEXT  */
+	EvAIOReqQueueEnqueue(req_queue, aio_req);
+	job_id = ThreadPoolJobEnqueue(thrd_aio_base->thrd_pool, &job_proto);
+
+	/* No more available THREAD_JOBs */
+	if (job_id < 0)
+	{
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "PATH [%s] - Too many enqueued THREAD_JOBs\n", path_str);
+
+		/* Remove and destroy ITEM from AIO_QUEUE and destroy it */
+		EvAIOReqQueueRemoveItem(req_queue, aio_req);
+		EvAIOReqDestroy(aio_req);
+		goto aio_failed;
+	}
+
+	/* Touch statistics before finish check */
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_COPY].tx_count++;
+	return AIOREQ_PENDING;
+
+	/* Touch statistics and leave */
+	aio_failed:
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_COPY].error++;
+	return AIOREQ_FAILED;
+}
+/**************************************************************************************************************************/
+int ThreadAIOFileMove(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, char *dst_str, EvAIOReqCBH *finish_cb, void *finish_cbdata)
+{
+	ThreadPoolJobProto job_proto;
+	EvAIOReq *aio_req;
+	int job_id;
+
+	EvKQBase *ev_base			= thrd_aio_base->ev_base;
+	EvAIOReqQueue *req_queue	= &thrd_aio_base->req_queue;
+
+	/* Create a new aio_request */
+	aio_req = EvAIOReqNew(&thrd_aio_base->req_queue, -1, thrd_aio_base, NULL, -1, -1, NULL, finish_cb, finish_cbdata);
+
+	/* No more available AIO_REQ */
+	if (!aio_req)
+	{
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "PATH [%s] - Too many enqueued AIO_REQs\n", path_str);
+		goto aio_failed;
+	}
+
+	/* AIO_REQ must be slotted and have an ID */
+	assert(aio_req->id >= 0);
+	assert(path_str);
+	assert(dst_str);
+
+	/* Initialize a generic JOB PROTOTYPE for this AIO_REQ */
+	ThreadAIOEngine_JobGenericInitialize(thrd_aio_base, &job_proto, aio_req, AIOREQ_OPCODE_MOVE);
+
+	/* Populate MOUNT_SPECIFIC data */
+	aio_req->file.path_str		= strdup(path_str);
+	aio_req->file.dev_str		= strdup(dst_str);
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
+	aio_req->flags.dup_dev_str 	= (aio_req->file.dev_str) ? 1 : 0;
+
+	/* Save pending request AIO_INFO */
+	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
+
+	/* Enqueue on REQ_QUEUE before THREAD ENQUEUE, remove later if JOB fail - Then, start running job on external THREAD CONTEXT  */
+	EvAIOReqQueueEnqueue(req_queue, aio_req);
+	job_id = ThreadPoolJobEnqueue(thrd_aio_base->thrd_pool, &job_proto);
+
+	/* No more available THREAD_JOBs */
+	if (job_id < 0)
+	{
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "PATH [%s] - Too many enqueued THREAD_JOBs\n", path_str);
+
+		/* Remove and destroy ITEM from AIO_QUEUE and destroy it */
+		EvAIOReqQueueRemoveItem(req_queue, aio_req);
+		EvAIOReqDestroy(aio_req);
+		goto aio_failed;
+	}
+
+	/* Touch statistics before finish check */
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_MOVE].tx_count++;
+	return AIOREQ_PENDING;
+
+	/* Touch statistics and leave */
+	aio_failed:
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_MOVE].error++;
 	return AIOREQ_FAILED;
 }
 /**************************************************************************************************************************/
@@ -767,8 +1029,8 @@ int ThreadAIODeviceMount(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, ch
 	aio_req->file.flags			= flags;
 	aio_req->file.path_str		= strdup(path_str);
 	aio_req->file.dev_str		= strdup(dev_str);
-	aio_req->flags.dup_path_str = 1;
-	aio_req->flags.dup_dev_str	= 1;
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
+	aio_req->flags.dup_dev_str 	= (aio_req->file.dev_str) ? 1 : 0;
 
 	/* Save pending request AIO_INFO */
 	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
@@ -819,7 +1081,8 @@ int ThreadAIODeviceUnMount(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, 
 
 	/* AIO_REQ must be slotted and have an ID */
 	assert(aio_req->id >= 0);
-	assert(path_str || dev_str);
+	assert(path_str);
+	assert(dev_str);
 	assert(retry_count >= 0);
 
 	/* Initialize a generic JOB PROTOTYPE for this AIO_REQ */
@@ -830,8 +1093,8 @@ int ThreadAIODeviceUnMount(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, 
 	aio_req->file.flags			= flags;
 	aio_req->file.path_str		= (path_str ? strdup(path_str) : NULL);
 	aio_req->file.dev_str		= (dev_str ? strdup(dev_str) : NULL);
-	aio_req->flags.dup_path_str = (path_str ? 1 : 0);
-	aio_req->flags.dup_dev_str	= (dev_str ? 1 : 0);
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
+	aio_req->flags.dup_dev_str 	= (aio_req->file.dev_str) ? 1 : 0;
 
 	/* Save pending request AIO_INFO */
 	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
@@ -859,6 +1122,66 @@ int ThreadAIODeviceUnMount(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, 
 	/* Touch statistics and leave */
 	aio_failed:
 	ev_base->stats.aio.opcode[AIOREQ_OPCODE_UNMOUNT].error++;
+	return AIOREQ_FAILED;
+}
+/**************************************************************************************************************************/
+int ThreadAIOCustom(ThreadAIOBase *thrd_aio_base, EvAIOReq *dst_aio_req, char *path_str, EvAIOReqCBH *custom_cb, EvAIOReqCBH *finish_cb, void *finish_cbdata)
+{
+	ThreadPoolJobProto job_proto;
+	EvAIOReq *aio_req;
+	int job_id;
+
+	EvKQBase *ev_base			= thrd_aio_base->ev_base;
+	EvAIOReqQueue *req_queue	= &thrd_aio_base->req_queue;
+
+	/* Create a new aio_request */
+	aio_req = EvAIOReqNew(&thrd_aio_base->req_queue, -1, thrd_aio_base, NULL, -1, -1, NULL, finish_cb, finish_cbdata);
+
+	/* No more available AIO_REQ */
+	if (!aio_req)
+	{
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "CBH [%p] - Too many enqueued AIO_REQs\n", custom_cb);
+		goto aio_failed;
+	}
+
+	/* AIO_REQ must be slotted and have an ID */
+	assert(aio_req->id >= 0);
+	assert(path_str);
+	assert(custom_cb);
+
+	/* Initialize a generic JOB PROTOTYPE for this AIO_REQ */
+	ThreadAIOEngine_JobGenericInitialize(thrd_aio_base, &job_proto, aio_req, AIOREQ_OPCODE_CUSTOM);
+
+	/* Populate CUSTOM_SPECIFIC data */
+	aio_req->file.path_str		= (path_str ? strdup(path_str) : NULL);
+	aio_req->flags.dup_path_str = (aio_req->file.path_str) ? 1 : 0;
+	aio_req->read_cb			= custom_cb;
+
+	/* Save pending request AIO_INFO */
+	if (dst_aio_req)			memcpy(dst_aio_req, aio_req, sizeof(EvAIOReq));
+
+	/* Enqueue on REQ_QUEUE before THREAD ENQUEUE, remove later if JOB fail - Then, start running job on external THREAD CONTEXT  */
+	EvAIOReqQueueEnqueue(req_queue, aio_req);
+	job_id = ThreadPoolJobEnqueue(thrd_aio_base->thrd_pool, &job_proto);
+
+	/* No more available THREAD_JOBs */
+	if (job_id < 0)
+	{
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "CBH [%s] - Too many enqueued THREAD_JOBs\n", custom_cb);
+
+		/* Remove and destroy ITEM from AIO_QUEUE and destroy it */
+		EvAIOReqQueueRemoveItem(req_queue, aio_req);
+		EvAIOReqDestroy(aio_req);
+		goto aio_failed;
+	}
+
+	/* Touch statistics before finish check */
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_CUSTOM].tx_count++;
+	return AIOREQ_PENDING;
+
+	/* Touch statistics and leave */
+	aio_failed:
+	ev_base->stats.aio.opcode[AIOREQ_OPCODE_CUSTOM].error++;
 	return AIOREQ_FAILED;
 }
 /**************************************************************************************************************************/
@@ -977,17 +1300,29 @@ static int ThreadAIOEngine_OpcodeDispatch(ThreadAIOBase *thrd_aio_base, EvAIOReq
 	case AIOREQ_OPCODE_UNLINK:
 		ThreadAIOEngine_OpcodeUnlink(thrd_aio_base, aio_req);
 		break;
+	case AIOREQ_OPCODE_REMOVE:
+		ThreadAIOEngine_OpcodeRemove(thrd_aio_base, aio_req);
+		break;
 	case AIOREQ_OPCODE_TRUNCATE:
 		ThreadAIOEngine_OpcodeTruncate(thrd_aio_base, aio_req);
 		break;
-	case AIOREQ_OPCODE_OPENDIR:
-		ThreadAIOEngine_OpcodeOpenDir(thrd_aio_base, aio_req);
+	case AIOREQ_OPCODE_RENAME:
+		ThreadAIOEngine_OpcodeRename(thrd_aio_base, aio_req);
+		break;
+	case AIOREQ_OPCODE_COPY:
+		ThreadAIOEngine_OpcodeCopy(thrd_aio_base, aio_req);
+		break;
+	case AIOREQ_OPCODE_MOVE:
+		ThreadAIOEngine_OpcodeMove(thrd_aio_base, aio_req);
 		break;
 	case AIOREQ_OPCODE_MOUNT:
 		ThreadAIOEngine_OpcodeMount(thrd_aio_base, aio_req);
 		break;
 	case AIOREQ_OPCODE_UNMOUNT:
 		ThreadAIOEngine_OpcodeUnMount(thrd_aio_base, aio_req);
+		break;
+	case AIOREQ_OPCODE_CUSTOM:
+		ThreadAIOEngine_OpcodeCustom(thrd_aio_base, aio_req);
 		break;
 
 		/* This should never happen */
@@ -999,8 +1334,9 @@ static int ThreadAIOEngine_OpcodeDispatch(ThreadAIOBase *thrd_aio_base, EvAIOReq
 	/* AIO FAILED, set flags */
 	if (aio_req->ret < 0)
 	{
-		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - AIO_REQID [%d] - OPCODE [%d]-[%s] - Failed with ERR [%d]\n",
-				aio_req->fd, aio_req->id, aio_req->aio_opcode, glob_aioreqcode_str[aio_req->aio_opcode], errno);
+		KQBASE_LOG_PRINTF(thrd_aio_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - AIO_REQID [%d] - OPCODE [%d]-[%s] - Failed [%d] with ERR [%d/%d]\n",
+				aio_req->fd, aio_req->id, aio_req->aio_opcode, glob_aioreqcode_str[aio_req->aio_opcode], aio_req->ret, errno, aio_req->err);
+
 		aio_req->flags.aio_failed = 1;
 	}
 
@@ -1198,6 +1534,12 @@ static void ThreadAIOEngine_OpcodeWriteFromMemBuffer(ThreadAIOBase *thrd_aio_bas
 /**************************************************************************************************************************/
 static void ThreadAIOEngine_OpcodeWrite(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req)
 {
+	if (!aio_req->data.ptr || aio_req->data.size <= 0)
+	{
+		aio_req->err 	= -1;
+		return;
+	}
+
 	assert(aio_req->data.offset >= 0);
 
 	aio_req->ret = pwrite(aio_req->fd, aio_req->data.ptr, aio_req->data.size, aio_req->data.offset);
@@ -1207,6 +1549,12 @@ static void ThreadAIOEngine_OpcodeWrite(ThreadAIOBase *thrd_aio_base, EvAIOReq *
 /**************************************************************************************************************************/
 static void ThreadAIOEngine_OpcodeStat(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req)
 {
+	if (!aio_req->file.path_str)
+	{
+		aio_req->err 	= -1;
+		return;
+	}
+
 	aio_req->ret = stat(aio_req->file.path_str, &aio_req->file.statbuf);
 	aio_req->err = errno;
 	return;
@@ -1214,26 +1562,257 @@ static void ThreadAIOEngine_OpcodeStat(ThreadAIOBase *thrd_aio_base, EvAIOReq *a
 /**************************************************************************************************************************/
 static void ThreadAIOEngine_OpcodeUnlink(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req)
 {
+	if (!aio_req->file.path_str)
+	{
+		aio_req->err 	= -1;
+		return;
+	}
+
 	aio_req->ret = unlink(aio_req->file.path_str);
+	aio_req->err = errno;
+	return;
+}
+/**************************************************************************************************************************/
+static void ThreadAIOEngine_OpcodeRemove(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req)
+{
+	char *arg_arr[8] 	= {0};
+	int arg_cnt			= 0;
+
+	if (!aio_req->file.path_str)
+	{
+		aio_req->err 	= -1;
+		return;
+	}
+
+	if (aio_req->file.path_str[0] == '/' && aio_req->file.path_str[1] == '\0')
+	{
+		aio_req->err 	= -2;
+		return;
+	}
+
+	if (aio_req->file.path_str[0] == '.' && aio_req->file.path_str[1] == '\0')
+	{
+		aio_req->err 	= -2;
+		return;
+	}
+
+	arg_arr[arg_cnt++] 	= THREAD_COMMAND_RM;
+	arg_arr[arg_cnt++] 	= "-rf";
+	arg_arr[arg_cnt++] 	= aio_req->file.path_str;
+	arg_arr[arg_cnt++] 	= NULL;
+	errno 				= 0;
+
+	aio_req->ret 		= ThreadAIOEngine_system(THREAD_COMMAND_RM, arg_arr);
+	aio_req->err 		= errno;
+
+	return;
+}
+/**************************************************************************************************************************/
+static void ThreadAIOEngine_OpcodeRename(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req)
+{
+	if (!aio_req->file.dev_str || !aio_req->file.path_str)
+	{
+		aio_req->err 	= -1;
+		return;
+	}
+
+	aio_req->ret = rename(aio_req->file.path_str, aio_req->file.dev_str);
 	aio_req->err = errno;
 	return;
 }
 /**************************************************************************************************************************/
 static void ThreadAIOEngine_OpcodeTruncate(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req)
 {
+	if (!aio_req->file.path_str || aio_req->data.size <= 0)
+	{
+		aio_req->err 	= -1;
+		return;
+	}
+
 	aio_req->ret = truncate(aio_req->file.path_str, aio_req->data.size);
 	aio_req->err = errno;
 	return;
 }
 /**************************************************************************************************************************/
-/**/
-/**/
-/**************************************************************************************************************************/
-static void ThreadAIOEngine_OpcodeOpenDir(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req)
+static void ThreadAIOEngine_OpcodeCopy(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req)
 {
-	/* NOT IMPLEMENTED */
+	char *arg_arr[8] 	= {0};
+	int arg_cnt			= 0;
+
+	if (!aio_req->file.path_str || !aio_req->file.dev_str)
+	{
+		aio_req->err 	= -1;
+		return;
+	}
+
+	arg_arr[arg_cnt++] 	= THREAD_COMMAND_CP;
+	arg_arr[arg_cnt++] 	= "-a";
+	arg_arr[arg_cnt++] 	= aio_req->file.path_str;
+	arg_arr[arg_cnt++] 	= aio_req->file.dev_str;
+	arg_arr[arg_cnt++] 	= NULL;
+	errno 				= 0;
+
+	aio_req->ret 		= ThreadAIOEngine_system(THREAD_COMMAND_CP, arg_arr);
+	aio_req->err 		= errno;
+
 	return;
 }
+/**************************************************************************************************************************/
+static void ThreadAIOEngine_OpcodeMove(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req)
+{
+	char *arg_arr[8] 	= {0};
+	int arg_cnt			= 0;
+
+	if (!aio_req->file.dev_str || !aio_req->file.path_str)
+	{
+		aio_req->err 	= -1;
+		return;
+	}
+
+	arg_arr[arg_cnt++] 	= THREAD_COMMAND_MV;
+	arg_arr[arg_cnt++] 	= aio_req->file.path_str;
+	arg_arr[arg_cnt++] 	= aio_req->file.dev_str;
+	arg_arr[arg_cnt++] 	= NULL;
+	errno 				= 0;
+
+	aio_req->ret 		= ThreadAIOEngine_system(THREAD_COMMAND_MV, arg_arr);
+	aio_req->err 		= errno;
+
+	return;
+}
+/**************************************************************************************************************************/
+static int ThreadAIOEngine_system(const char *command, char *const argv[])
+{
+	pid_t pid 	= 0;
+	pid_t wpid 	= 0;
+
+	int pstat;
+	struct sigaction ign 		= {0};
+	struct sigaction intact 	= {0};
+	struct sigaction quitact 	= {0};
+
+	sigset_t newsigblock 	= {0};
+	sigset_t oldsigblock 	= {0};
+
+	/* Sanitize */
+	if (!command)
+		return 1;
+
+//	(void)sigemptyset(&newsigblock);
+//	(void)sigaddset(&newsigblock, SIGCHLD);
+//	(void)sigaddset(&newsigblock, SIGINT);
+//	(void)sigaddset(&newsigblock, SIGQUIT);
+//	(void)sigprocmask(SIG_BLOCK, &newsigblock, &oldsigblock);
+
+//	struct sigaction act;
+//	act.sa_handler = SIG_DFL;
+//	act.sa_flags = 0;
+//	sigfillset(&act.sa_mask);
+//	(void)sigaction(EV_SIGCHLD, &act, NULL);
+//	sigdelset(&act.sa_mask, EV_SIGCHLD);
+//	(void)sigprocmask(SIG_SETMASK, &act.sa_mask, NULL);
+
+	signal(EV_SIGCHLD, SIG_DFL);
+
+	/* Fork process */
+//	pid 		= vfork();
+
+#if !defined(__linux__)
+	pid 		= rfork(RFPROC);
+#else
+	pid 		= fork();
+#endif
+//	pid 		= system();
+
+	switch(pid)
+	{
+	/*
+	 * In the child, use unwrapped syscalls.
+	 * libthr is in undefined state after vfork().
+	 */
+	case -1:			/* error */
+//		(void)sigprocmask(SIG_SETMASK, &oldsigblock, NULL);
+		return -1;
+
+	case 0:				/* child */
+		/*
+		 * Restore original signal dispositions and exec the command.
+		 */
+//		(void)sigprocmask(SIG_SETMASK, &oldsigblock, NULL);
+//		execl(_PATH_BSHELL, "sh", "-c", command, (char *)NULL);
+//		setsid();
+		execv(command, argv);
+//		exit(EXIT_FAILURE);
+//		_exit(EXIT_FAILURE);
+		_exit(127);
+	}
+	/*
+	 * If we are running means that the child has either completed its execve, or has failed.
+	 * Block SIGINT/QUIT because sh -c handles it and wait for it to clean up.
+	 */
+//	memset(&ign, 0, sizeof(ign));
+////	ign.sa_handler 	= ThreadAIOEngine_systemSig;
+//	ign.sa_handler 	= SIG_IGN;
+
+//	(void)sigemptyset(&ign.sa_mask);
+//	(void)sigaction(SIGINT, &ign, &intact);
+//	(void)sigaction(SIGQUIT, &ign, &quitact);
+
+	do
+	{
+//		wpid 		= _wait4(pid, &pstat, WUNTRACED | WCONTINUED, (struct rusage *)0);
+//		wpid 		= waitpid(pid, &pstat, WNOHANG);
+		wpid 		= waitpid(pid, &pstat, 0);
+
+		/* Has failure */
+		if (wpid < 0)
+		{
+			if (errno == EINTR)
+			{
+				printf("pid [%d]/[%d] - err [%d] - looped [%d]\n", pid, wpid, errno, pstat);
+				continue;
+			}
+//			break;
+			printf("pid [%d]/[%d] - err [%d] - waitpiddd\n", pid, wpid, errno);
+			perror("waitpid");
+			exit(EXIT_FAILURE);
+		}
+
+		if (WIFEXITED(pstat))
+		{
+			printf("pid [%d]/[%d] - err [%d] - exited with status [%d]-[%d]\n", pid, wpid, errno, WEXITSTATUS(pstat), pstat);
+			wpid 	= 0;
+		}
+		else if (WIFSIGNALED(pstat))
+		{
+			printf("pid [%d]/[%d] - err [%d] - killed by signal [%d]-[%d]\n", pid, wpid, errno, WTERMSIG(pstat), pstat);
+			wpid 	= 0;
+		}
+		else if (WIFSTOPPED(pstat))
+		{
+			printf("pid [%d]/[%d] - err [%d] - stopped by signal [%d]-[%d]\n", pid, wpid, errno, WSTOPSIG(pstat), pstat);
+		}
+		else if (WIFCONTINUED(pstat))
+		{
+			printf("pid [%d]/[%d] - err [%d] - continued\n", wpid, errno);
+		}
+
+    } while (!WIFEXITED(pstat) && !WIFSIGNALED(pstat));
+
+//	} while (wpid == -1 && errno == EINTR);
+
+//	(void)sigaction(SIGINT, &intact, NULL);
+//	(void)sigaction(SIGQUIT,  &quitact, NULL);
+//	(void)sigprocmask(SIG_SETMASK, &oldsigblock, NULL);
+
+	if (wpid == -1)
+		return -2;
+
+	return pstat;
+}
+/**************************************************************************************************************************/
+/**/
+/**/
 /**************************************************************************************************************************/
 /**/
 /**/
@@ -1309,6 +1888,15 @@ static void ThreadAIOEngine_OpcodeUnMount(ThreadAIOBase *thrd_aio_base, EvAIOReq
 		continue;
 	}
 #endif
+	return;
+}
+/**************************************************************************************************************************/
+static void ThreadAIOEngine_OpcodeCustom(ThreadAIOBase *thrd_aio_base, EvAIOReq *aio_req)
+{
+	/* We should have CALLBACK */
+	assert(aio_req->read_cb);
+	aio_req->read_cb(-1, -1, -1, thrd_aio_base, aio_req);
+
 	return;
 }
 /**************************************************************************************************************************/

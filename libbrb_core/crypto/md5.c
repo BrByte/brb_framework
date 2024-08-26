@@ -109,6 +109,28 @@ void BRB_MD5Update(BRB_MD5_CTX *ctx, const void *_buf, unsigned long len)
 	memcpy(ctx->in, buf, len);
 }
 /**************************************************************************************************************************/
+void BRB_MD5UpdateLowerText(BRB_MD5_CTX *md5_context, char *key_ptr, int key_sz)
+{
+	char tmp_buff[128] = {0};
+	int i;
+
+	/* Sanitize */
+	if (!key_ptr || key_sz <= 0)
+		return;
+
+	for (i = 0; i < key_sz; i++)
+	{
+		if (key_ptr[i] >= 'A' && key_ptr[i] <= 'Z')
+			tmp_buff[i] 	= key_ptr[i] + 32;
+		else
+			tmp_buff[i] 	= key_ptr[i];
+	}
+
+	BRB_MD5Update(md5_context, (char *)&tmp_buff, key_sz);
+
+	return;
+}
+/**************************************************************************************************************************/
 void BRB_MD5Final(BRB_MD5_CTX *ctx)
 {
 	/* Number of bytes in ctx->in */

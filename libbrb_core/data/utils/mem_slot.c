@@ -251,6 +251,44 @@ void *MemSlotBaseSlotPointToHead(MemSlotBase *memslot_base, int list_id)
 	return ret_ptr;
 }
 /**************************************************************************************************************************/
+void *MemSlotBaseSlotPointToTail(MemSlotBase *memslot_base, int list_id)
+{
+	MemSlotMetaData *slot_meta;
+	char *ret_ptr;
+
+	/* Running THREAD_SAFE, LOCK MUTEX */
+	if (memslot_base->flags.thread_safe)
+		MUTEX_LOCK(memslot_base->mutex, "MEM_SLOT");
+
+	/* List is empty, bail out */
+	if (!memslot_base->list[list_id].tail)
+	{
+		if (memslot_base->flags.thread_safe)
+			MUTEX_UNLOCK(memslot_base->mutex, "MEM_SLOT");
+		return NULL;
+	}
+
+	/* Pop item from linked list and free slot */
+	slot_meta = memslot_base->list[list_id].tail->data;
+
+	/* Nothing left, bail out */
+	if (!slot_meta)
+	{
+		if (memslot_base->flags.thread_safe)
+			MUTEX_UNLOCK(memslot_base->mutex, "MEM_SLOT");
+
+		return NULL;
+	}
+
+	/* Grab address and leave */
+	ret_ptr = MemSlotBaseSlotData(slot_meta);
+
+	if (memslot_base->flags.thread_safe)
+		MUTEX_UNLOCK(memslot_base->mutex, "MEM_SLOT");
+
+	return ret_ptr;
+}
+/**************************************************************************************************************************/
 void *MemSlotBaseSlotPopHead(MemSlotBase *memslot_base, int list_id)
 {
 	MemSlotMetaData *slot_meta;

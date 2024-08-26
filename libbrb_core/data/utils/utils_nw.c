@@ -180,6 +180,105 @@ void BrbNw_Ipv6Netmask(struct in6_addr *netmask, int mask)
 
 	return;
 }
+/**************************************************************************************************************************/
+int BrbNw_IpMaskExplode(char *network_ptr, struct sockaddr_storage *prefix_addr, struct sockaddr_storage *prefix_mask)
+{
+	int af_type;
+
+	/* sanitize */
+	if (!network_ptr)
+		return -1;
+
+	/* sanitize */
+	if (!prefix_addr || !prefix_mask)
+		return -2;
+
+	char only_addr_str[128];
+	char *ip_mask_ptr 				= NULL;
+	int ip_mask;
+	int i;
+
+	/* zero fill info */
+	memset(prefix_addr, 0, sizeof(struct sockaddr_storage));
+	memset(prefix_mask, 0, sizeof(struct sockaddr_storage));
+
+	/* Split IP from NETMASK */
+	for (i = 0; (network_ptr[i] != '\0' && i < sizeof(only_addr_str) - 1); i++)
+	{
+		if (network_ptr[i] == '/')
+		{
+			ip_mask_ptr				= network_ptr + i + 1;
+			break;
+		}
+
+		only_addr_str[i] 			= network_ptr[i];
+		continue;
+	}
+
+	only_addr_str[i] 				= '\0';
+	ip_mask 						= ip_mask_ptr ? atoi(ip_mask_ptr) : -1;
+
+	/* Check address */
+	af_type 						= BrbIsValidIpToSockAddr((char *)&only_addr_str, prefix_addr);
+
+	if (af_type == AF_UNSPEC)
+		return -3;
+
+	if (af_type == AF_INET)
+	{
+//		if (satosin(prefix_addr)->sin_addr.s_addr == ntohl(0))
+//		{
+//			KQBASE_LOG_PRINTF(glob_log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "INVALID ADDR [%s]\n", network_ptr);
+//
+//			return -4;
+//		}
+
+		prefix_addr->ss_family 		= AF_INET;
+		prefix_mask->ss_family 		= AF_INET;
+#if !defined(__linux__)
+		prefix_addr->ss_len 		= sizeof(struct sockaddr_in);
+		prefix_mask->ss_len 		= sizeof(struct sockaddr_in);
+#endif
+
+		/* Get mask width */
+		if ((ip_mask < 0) || (ip_mask > 32))
+			ip_mask 				= 32;
+
+		BrbNw_Ipv4Netmask(&satosin(prefix_mask)->sin_addr, ip_mask);
+		BrbNw_Ipv4Mask(&satosin(prefix_addr)->sin_addr, &satosin(prefix_mask)->sin_addr);
+	}
+	else if (af_type == AF_INET6)
+	{
+		prefix_addr->ss_family 		= AF_INET6;
+		prefix_mask->ss_family 		= AF_INET6;
+#if !defined(__linux__)
+		prefix_addr->ss_len 		= sizeof(struct sockaddr_in6);
+		prefix_mask->ss_len 		= sizeof(struct sockaddr_in6);
+#endif
+
+		/* Get mask width */
+		if ((ip_mask < 0) || (ip_mask > 128))
+			ip_mask 				= 128;
+
+		BrbNw_Ipv6Netmask(&satosin6(prefix_mask)->sin6_addr, ip_mask);
+		BrbNw_Ipv6Mask(&satosin6(prefix_addr)->sin6_addr, &satosin6(prefix_mask)->sin6_addr);
+	}
+
+	return af_type;
+}
+/**************************************************************************************************************************/
+int BrbNw_IpMaskImplode(char *network_ptr, int network_sz, struct sockaddr_storage *prefix_addr, struct sockaddr_storage *prefix_mask)
+{
+	char addr_str[128] = {0};
+	char mask_str[128] = {0};
+
+//	BrbNetworkSockNtop((char*)&addr_str, sizeof(addr_str) - 1, (const struct sockaddr *)prefix_addr, prefix_addr->ss_len);
+	// TODO linuxes, not used ss_len inside
+	BrbNetworkSockNtop((char*)&addr_str, sizeof(addr_str) - 1, (const struct sockaddr *)prefix_addr, 0);
+	BrbNetworkSockMask((char*)&mask_str, sizeof(mask_str) - 1, (const struct sockaddr *)prefix_mask);
+
+	return snprintf(network_ptr, network_sz, "%s%s", (char *)&addr_str, (char*)&mask_str);
+}
 ///**************************************************************************************************************************/
 //int BrbNw_Ipv4_match(struct in_addr *addr, struct in_addr *net, uint8_t bits)
 //{
@@ -268,6 +367,15 @@ int BrbIsValidIpToSockAddr(char *ip_addr_str, struct sockaddr_storage *target_so
 	return target_sockaddr->ss_family;
 }
 /**************************************************************************************************************************/
+void BrbSockAddrSetPort(struct sockaddr_storage *sa_st, int port)
+{
+	if (sa_st->ss_family == AF_INET6)
+		satosin6(sa_st)->sin6_port 	= htons(port);
+	else
+		satosin(sa_st)->sin_port 		= htons(port);
+
+}
+/**************************************************************************************************************************/
 int BrbIpFamilyParse(const char *ip_str, BrbIpFamily *ip_family, unsigned char allow)
 {
 	/* Can't parse CIDR */
@@ -300,6 +408,8 @@ int BrbNetworkSockNtop(char *ret_data_ptr, int ret_maxlen, const struct sockaddr
 
 	int cur_sz = 0;
 
+	// TODO linuxes, not used salen inside
+
 	switch (sa->sa_family)
 	{
 #if defined(SOCK_MAXADDRLEN)
@@ -320,7 +430,7 @@ int BrbNetworkSockNtop(char *ret_data_ptr, int ret_maxlen, const struct sockaddr
 
 		cur_sz += snprintf(ret_data_ptr, ret_maxlen, "/%hu", new_mask);
 
-		return 1;
+		return cur_sz;
 	}
 #endif
 	case AF_UNSPEC:
@@ -343,12 +453,12 @@ int BrbNetworkSockNtop(char *ret_data_ptr, int ret_maxlen, const struct sockaddr
 //		if (!strcmp(ret_data_ptr, "0.0.0.0"))
 //			cur_sz = snprintf(ret_data_ptr, ret_maxlen,  "default");
 
-		return 1;
+		return cur_sz;
 	}
 	case AF_INET6:
 	{
 		static char buf_ptr[INET6_ADDRSTRLEN + 1];
-		char *inet_ptr;
+		const char *inet_ptr;
 
 		inet_ptr 		= inet_ntop(AF_INET6, &satosin6(sa)->sin6_addr, buf_ptr, sizeof(buf_ptr));
 
@@ -361,7 +471,7 @@ int BrbNetworkSockNtop(char *ret_data_ptr, int ret_maxlen, const struct sockaddr
 		if (ntohs(satosin6(sa)->sin6_port) != 0)
 			cur_sz 		+= snprintf(ret_data_ptr + cur_sz, ret_maxlen, ".%d", ntohs(satosin6(sa)->sin6_port));
 
-		return 1;
+		return cur_sz;
 	}
 
 #if defined(AF_LINK)
@@ -390,19 +500,19 @@ int BrbNetworkSockNtop(char *ret_data_ptr, int ret_maxlen, const struct sockaddr
 //
 //			strlcpy(ret_data_ptr, cp, (sdl->sdl_nlen + 1));
 
-			strlcpy(ret_data_ptr, sdl->sdl_data, (sdl->sdl_nlen + 1));
+			cur_sz = strlcpy(ret_data_ptr, sdl->sdl_data, (sdl->sdl_nlen + 1));
 			//printf("SysControl_NetworkSockNtop - AFF_LINK -> [%d]-[%s]-[%s]\n", sdl->sdl_nlen, sdl->sdl_data, ret_data_ptr);
 
 		}
 		else
-			snprintf(ret_data_ptr, ret_maxlen, "link#%d", sdl->sdl_index);
+			cur_sz = snprintf(ret_data_ptr, ret_maxlen, "link#%d", sdl->sdl_index);
 
-		return 1;
+		return cur_sz;
 	}
 #endif
 	default:
-		snprintf(ret_data_ptr, ret_maxlen, "unknown %d", sa->sa_family);
-		return 0;
+		cur_sz = snprintf(ret_data_ptr, ret_maxlen, "unknown %d", sa->sa_family);
+		return cur_sz;
 	}
 
 	return 0;
@@ -537,5 +647,387 @@ unsigned char *BrbMacStrToOctedDup(char *mac_str)
 
 	return (unsigned char *)memcpy(calloc(1, sizeof(unsigned int) * 6), mac, 6);
 }
+
+/**************************************************************************************************************************/
+/** Read a packet from a file descriptor, retrieving additional header information
+ *
+ * Abstracts away the complexity of using the complexity of using recvmsg().
+ *
+ * In addition to reading data from the file descriptor, the src and dst addresses
+ * and the receiving interface index are retrieved.  This enables us to send
+ * replies using the correct IP interface, in the case where the server is multihomed.
+ * This is not normally possible on unconnected datagram sockets.
+ *
+ * @param[in] fd	The file descriptor to read from.
+ * @param[out] buf	Where to write the received datagram data.
+ * @param[in] len	of buf.
+ * @param[in] flags	passed unmolested to recvmsg.
+ * @param[out] from	Where to write the source address.
+ * @param[in] from_len	Length of the structure pointed to by from.
+ * @param[out] to	Where to write the destination address.  If NULL recvmsg()
+ *			will be used instead.
+ * @param[in] to_len	Length of the structure pointed to by to.
+ * @param[out] if_index	The interface which received the datagram (may be NULL).
+ *			Will only be populated if to is not NULL.
+ * @param[out] when	the packet was received (may be NULL).  If SO_TIMESTAMP is
+ *			not available or SO_TIMESTAMP Was not set on the socket,
+ *			then another method will be used instead to get the time.
+ * @return
+ *	- 0 on success.
+ *	- -1 on failure.
+ */
+int brb_recvfromto(int fd, void *buf, size_t len, int flags, struct sockaddr_storage *from, socklen_t *from_len, struct sockaddr_storage *to, socklen_t *to_len, int *if_index)
+{
+	struct msghdr msgh;
+	struct cmsghdr *cmsg;
+	struct iovec iov;
+	char cbuf[256];
+	int ret;
+	struct sockaddr_storage	si;
+	socklen_t		si_len = sizeof(si);
+
+#if !defined(IP_PKTINFO) && !defined(IP_RECVDSTADDR) && !defined(IPV6_PKTINFO)
+	/* If the recvmsg() flags aren't defined, fall back to using recvfrom()  */
+	to 	= NULL:
+#endif
+
+	/*
+	 *	Catch the case where the caller passes invalid arguments.
+	 */
+	if (!to || !to_len)
+		return recvfrom(fd, buf, len, flags, (struct sockaddr *)from, from_len);
+
+	/* zero fill info */
+	memset(&si, 0, sizeof(si));
+
+	/*
+	 *	recvmsg doesn't provide sin_port so we have to
+	 *	retrieve it using getsockname().
+	 */
+	if (getsockname(fd, (struct sockaddr *)&si, &si_len) < 0)
+	{
+		errno 	= EIO;
+		return -1;
+	}
+
+	/*
+	 *	Initialize the 'to' address.  It may be INADDR_ANY here,
+	 *	with a more specific address given by recvmsg(), below.
+	 */
+	if (si.ss_family == AF_INET)
+	{
+#if !defined(IP_PKTINFO) && !defined(IP_RECVDSTADDR)
+		return recvfrom(fd, buf, len, flags, (struct sockaddr *)from, from_len);
+#else
+		if (*to_len < sizeof(struct sockaddr_in))
+		{
+			errno 	= EINVAL;
+			return -1;
+		}
+
+		*to_len 	= sizeof(struct sockaddr_in);
+		memcpy(to, &si, sizeof(struct sockaddr_in));
+#endif
+	}
+
+#ifdef AF_INET6
+	else if (si.ss_family == AF_INET6)
+	{
+#if !defined(IPV6_PKTINFO)
+		return recvfrom(fd, buf, len, flags, from, from_len);
+#else
+		if (*to_len < sizeof(struct sockaddr_in6))
+		{
+			errno 	= EINVAL;
+			return -1;
+		}
+
+		*to_len 	= sizeof(struct sockaddr_in6);
+		memcpy(to, &si, sizeof(struct sockaddr_in6));
+#endif
+	}
+#endif
+	/*
+	 *	Unknown address family.
+	 */
+	else
+	{
+		errno = EINVAL;
+		return -1;
+	}
+
+	/* Set up iov and msgh structures. */
+	memset(&cbuf, 0, sizeof(cbuf));
+	memset(&msgh, 0, sizeof(struct msghdr));
+	iov.iov_base 		= buf;
+	iov.iov_len  		= len;
+	msgh.msg_control 	= cbuf;
+	msgh.msg_controllen = sizeof(cbuf);
+	msgh.msg_name 		= from;
+	msgh.msg_namelen 	= from_len ? *from_len : 0;
+	msgh.msg_iov 		= &iov;
+	msgh.msg_iovlen 	= 1;
+	msgh.msg_flags 		= 0;
+
+	/* Receive one packet. */
+	ret 				= recvmsg(fd, &msgh, flags);
+
+	if (ret < 0)
+		return ret;
+
+	if (from_len)
+		*from_len 		= msgh.msg_namelen;
+
+	if (if_index)
+		*if_index 		= 0;
+
+	/* Process auxiliary received data in msgh */
+	for (cmsg = CMSG_FIRSTHDR(&msgh); cmsg != NULL; cmsg = CMSG_NXTHDR(&msgh, cmsg))
+	{
+#ifdef IP_PKTINFO
+		if ((cmsg->cmsg_level == SOL_IP) && (cmsg->cmsg_type == IP_PKTINFO))
+		{
+			struct in_pktinfo *i 	= (struct in_pktinfo *) CMSG_DATA(cmsg);
+			satosin(to)->sin_addr 	= i->ipi_addr;
+
+#if !defined(__linux__)
+			to->sa_family 			= AF_INET;
+#endif
+			*to_len 				= sizeof(struct sockaddr_in);
+
+			if (if_index)
+				*if_index 			= i->ipi_ifindex;
+
+			break;
+		}
+#endif
+
+#ifdef IP_RECVDSTADDR
+		if ((cmsg->cmsg_level == IPPROTO_IP) && (cmsg->cmsg_type == IP_RECVDSTADDR))
+		{
+			struct in_addr *i 		= (struct in_addr *) CMSG_DATA(cmsg);
+			satosin(to)->sin_addr 	= *i;
+			to->ss_family 			= AF_INET;
+			*to_len 				= sizeof(struct sockaddr_in);
+
+			break;
+		}
+#endif
+
+#ifdef IPV6_PKTINFO
+		if ((cmsg->cmsg_level == IPPROTO_IPV6) && (cmsg->cmsg_type == IPV6_PKTINFO))
+		{
+			struct in6_pktinfo *i 	= (struct in6_pktinfo *) CMSG_DATA(cmsg);
+			satosin6(to)->sin6_addr = i->ipi6_addr;
+			to->ss_family 			= AF_INET6;
+			*to_len 				= sizeof(struct sockaddr_in6);
+
+			if (if_index)
+				*if_index 			= i->ipi6_ifindex;
+
+			break;
+		}
+#endif
+
+
+//#ifdef SO_TIMESTAMP
+//		if (when && (cmsg->cmsg_level == SOL_IP) && (cmsg->cmsg_type == SO_TIMESTAMP)) {
+//			*when = fr_time_from_timeval((struct timeval *)CMSG_DATA(cmsg));
+//		}
+//#endif
+	}
+
+	return ret;
+}
+/**************************************************************************************************************************/
+/** Send packet via a file descriptor, setting the src address and outbound interface
+ *
+ * Abstracts away the complexity of using the complexity of using sendmsg().
+ *
+ * @param[in] fd	The file descriptor to write to.
+ * @param[in] buf	Where to read datagram data from.
+ * @param[in] len	of datagram data.
+ * @param[in] flags	passed unmolested to sendmsg.
+ * @param[in] from	The source address.
+ * @param[in] from_len	Length of the structure pointed to by from.
+ * @param[in] to	The destination address.
+ * @param[in] to_len	Length of the structure pointed to by to.
+ * @param[in] if_index	The interface on which to send the datagram.
+ *			If automatic interface selection is desired, value should be 0.
+ * @return
+ *	- 0 on success.
+ *	- -1 on failure.
+ */
+int brb_sendfromto(int fd, void *buf, size_t len, int flags, struct sockaddr *from, socklen_t from_len, struct sockaddr *to, socklen_t to_len, int if_index)
+{
+	struct msghdr msgh 	= {0};
+	struct iovec iov 	= {0};
+	char cbuf[256] 		= {0};
+	int op_status 		= 0;
+
+	/* Unknown address family */
+	if (from && (from->sa_family != AF_INET) && (from->sa_family != AF_INET6))
+	{
+//		errno 	= ENOENT;
+//		return -1;
+
+		/* just use regular sendto */
+		op_status 	= sendto(fd, buf, len, flags, to, to_len);
+
+		if (op_status < 0)
+			return -2;
+
+		return op_status;
+	}
+
+#ifdef __FreeBSD__
+	/*
+	 *	FreeBSD is extra pedantic about the use of IP_SENDSRCADDR,
+	 *	and sendmsg will fail with EINVAL if IP_SENDSRCADDR is used
+	 *	with a socket which is bound to something other than
+	 *	INADDR_ANY
+	 */
+	struct sockaddr bound 	= {0};
+	socklen_t bound_len 	= sizeof(bound);
+
+	if (getsockname(fd, &bound, &bound_len) < 0)
+	{
+		errno 		= EBADF;
+		return -1;
+	}
+
+	switch (bound.sa_family)
+	{
+	case AF_INET:
+		if (satosin(&bound)->sin_addr.s_addr != INADDR_ANY)
+			from 	= NULL;
+		break;
+	case AF_INET6:
+		if (!IN6_IS_ADDR_UNSPECIFIED(&satosin6(&bound)->sin6_addr))
+			from 	= NULL;
+		break;
+	}
+#endif	/* !__FreeBSD__ */
+
+	/*
+	 *	If the sendmsg() flags aren't defined, fall back to
+	 *	using sendto().  These flags are defined on FreeBSD,
+	 *	but laying it out this way simplifies the look of the
+	 *	code.
+	 */
+#  if !defined(IP_PKTINFO) && !defined(IP_SENDSRCADDR)
+	if (from && from->sa_family == AF_INET)
+		from 	= NULL;
+#  endif
+
+#  if !defined(IPV6_PKTINFO)
+	if (from && from->sa_family == AF_INET6)
+		from 	= NULL;
+#  endif
+
+	/* No "from", just use regular sendto */
+	if (!from || (from_len == 0))
+	{
+		op_status 	= sendto(fd, buf, len, flags, to, to_len);
+
+		if (op_status < 0)
+			return -2;
+
+		return op_status;
+	}
+
+	/* Set up control buffer iov and msgh structures. */
+	memset(&cbuf, 0, sizeof(cbuf));
+	memset(&msgh, 0, sizeof(msgh));
+	memset(&iov, 0, sizeof(iov));
+	iov.iov_base 		= buf;
+	iov.iov_len 		= len;
+
+	msgh.msg_iov 		= &iov;
+	msgh.msg_iovlen 	= 1;
+	msgh.msg_name 		= to;
+	msgh.msg_namelen 	= to_len;
+
+# if defined(IP_PKTINFO) || defined(IP_SENDSRCADDR)
+
+	if (from->sa_family == AF_INET)
+	{
+		struct sockaddr_in *s4 = (struct sockaddr_in *)from;
+
+#  ifdef IP_PKTINFO
+		struct cmsghdr *cmsg;
+		struct in_pktinfo *pkt;
+
+		msgh.msg_control 	= cbuf;
+		msgh.msg_controllen = CMSG_SPACE(sizeof(*pkt));
+
+		cmsg 				= CMSG_FIRSTHDR(&msgh);
+		cmsg->cmsg_level 	= SOL_IP;
+		cmsg->cmsg_type 	= IP_PKTINFO;
+		cmsg->cmsg_len 		= CMSG_LEN(sizeof(*pkt));
+
+		pkt 				= (struct in_pktinfo *)CMSG_DATA(cmsg);
+		memset(pkt, 0, sizeof(*pkt));
+		pkt->ipi_spec_dst 	= s4->sin_addr;
+		pkt->ipi_ifindex 	= if_index;
+
+#  elif defined(IP_SENDSRCADDR)
+		struct cmsghdr *cmsg;
+		struct in_addr *in;
+
+		msgh.msg_control 	= cbuf;
+		msgh.msg_controllen = CMSG_SPACE(sizeof(*in));
+//		msgh.msg_controllen = CMSG_SPACE(sizeof(struct in_addr));
+
+		cmsg = CMSG_FIRSTHDR(&msgh);
+		cmsg->cmsg_level 	= IPPROTO_IP;
+		cmsg->cmsg_type 	= IP_SENDSRCADDR;
+		cmsg->cmsg_len 		= CMSG_LEN(sizeof(*in));
+//		cmsg->cmsg_len 		= CMSG_LEN(sizeof(struct in_addr));
+
+		in 					= (struct in_addr *)CMSG_DATA(cmsg);
+		*in 				= s4->sin_addr;
+
+//		msgh.msg_controllen = cmsg->cmsg_len;
+#  endif
+	}
+
+#endif
+
+#  if defined(IPV6_PKTINFO)
+
+	if (from->sa_family == AF_INET6)
+	{
+		struct sockaddr_in6 *s6 = (struct sockaddr_in6 *)from;
+
+		struct cmsghdr *cmsg;
+		struct in6_pktinfo *pkt;
+
+		msgh.msg_control 	= cbuf;
+		msgh.msg_controllen = CMSG_SPACE(sizeof(struct in6_pktinfo));
+
+		cmsg = CMSG_FIRSTHDR(&msgh);
+		cmsg->cmsg_level 	= IPPROTO_IPV6;
+		cmsg->cmsg_type 	= IPV6_PKTINFO;
+		cmsg->cmsg_len 		= CMSG_LEN(sizeof(struct in6_pktinfo));
+
+		pkt 				= (struct in6_pktinfo *) CMSG_DATA(cmsg);
+		memset(pkt, 0, sizeof(struct in6_pktinfo));
+		pkt->ipi6_addr 		= s6->sin6_addr;
+		pkt->ipi6_ifindex 	= if_index;
+	}
+
+#  endif	/* IPV6_PKTINFO */
+
+	/* Send the message */
+	op_status 	= sendmsg(fd, &msgh, flags);
+
+	if (op_status < 0)
+		return -3;
+
+	return op_status;
+}
+/**************************************************************************************************************************/
+
 /**************************************************************************************************************************/
 

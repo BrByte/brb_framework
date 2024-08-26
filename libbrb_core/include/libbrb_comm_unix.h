@@ -367,9 +367,6 @@ typedef struct _CommEvUNIXServerConn
 
 
 } CommEvUNIXServerConn;
-
-
-
 /******************************************************************************************************/
 /**/
 /**/
@@ -381,17 +378,6 @@ typedef enum
 	COMM_UNIX_CLIENT_EVENT_CONNECT,
 	COMM_UNIX_CLIENT_EVENT_LASTITEM
 } CommEvUNIXClientEventCodes;
-
-typedef enum
-{
-	COMM_UNIX_CLIENT_STATE_DISCONNECTED,
-	COMM_UNIX_CLIENT_STATE_CONNECTING,
-	COMM_UNIX_CLIENT_STATE_CONNECTED,
-	COMM_UNIX_CLIENT_STATE_CONNECT_FAILED_TIMEOUT,
-	COMM_UNIX_CLIENT_STATE_CONNECT_FAILED_REFUSED,
-	COMM_UNIX_CLIENT_STATE_CONNECT_FAILED_CONNECT_SYSCALL,
-	COMM_UNIX_CLIENT_STATE_CONNECT_FAILED_UNKNWON,
-} CommEvUNIXClientStateCodes;
 
 typedef enum
 {

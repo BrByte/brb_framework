@@ -44,15 +44,12 @@ static EvBaseKQCBH CommEvSSHClientEventSSHNegotiate;
 static EvBaseKQCBH CommEvSSHClientTimerConnectTimeout;
 static EvBaseKQCBH CommEvSSHClientTimerReconnect;
 
-//static EvAIOReqCBH CommEvSSHClientMemBufferWriteFinish;
-
 static void CommEvSSHClientDestroyConnReadAndWriteBuffers(CommEvSSHClient *ev_sshclient);
 static void CommEvSSHClientInternalDisconnect(CommEvSSHClient *ev_sshclient);
 static void CommEvSSHClientEnqueueAndKickWriteQueue(CommEvSSHClient *ev_sshclient, EvAIOReq *aio_req);
 static void CommEvSSHClientEnqueueHeadAndKickWriteQueue(CommEvSSHClient *ev_sshclient, EvAIOReq *aio_req);
 static void CommEvSSHClientAddrInitFromAReply(CommEvSSHClient *ev_sshclient);
 static int CommEvSSHAsyncConnect(CommEvSSHClient *ev_sshclient);
-static int CommEvSSHClientCheckState(int socket_fd);
 static void CommEvSSHClientEventDispatchInternal(CommEvSSHClient *ev_sshclient, int data_sz, int thrd_id, int ev_type);
 static void CommEvSSHClientAddrInit(CommEvSSHClient *ev_sshclient, char *host, unsigned short port);
 static void CommEvSSHClientAddrInitFromAReply(CommEvSSHClient *ev_sshclient);
@@ -70,13 +67,11 @@ CommEvSSHClient *CommEvSSHClientNew(EvKQBase *kq_base)
 	int socket_fd;
 
 	/* Create socket and set it to non_blocking */
-	socket_fd = EvKQBaseSocketTCPNew(kq_base);
+	socket_fd 									= EvKQBaseSocketTCPNew(kq_base);
 
 	/* Check if created socket is ok */
 	if (socket_fd < 0)
-	{
-		return COMM_CLIENT_FAILURE_SOCKET;
-	}
+		return NULL;
 
 	ev_sshclient								= calloc(1, sizeof(CommEvSSHClient));
 	ev_sshclient->kq_base						= kq_base;
@@ -115,6 +110,7 @@ void CommEvSSHClientDestroy(CommEvSSHClient *ev_sshclient)
 	/* Close the socket and cancel any pending events */
 	if (ev_sshclient->socket_fd > -1)
 	{
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - CLOSING\n", ev_sshclient->socket_fd);
 		EvKQBaseSocketClose(ev_sshclient->kq_base, ev_sshclient->socket_fd);
 		ev_sshclient->socket_fd = -1;
 	}
@@ -224,7 +220,13 @@ void CommEvSSHClientResetFD(CommEvSSHClient *ev_sshclient)
 
 	/* Will close socket and cancel any pending events of old_socketfd */
 	if (old_socketfd > 0)
+	{
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - CLOSING\n", ev_sshclient->socket_fd);
 		EvKQBaseSocketClose(ev_sshclient->kq_base, old_socketfd);
+	}
+
+	/* Set socket description */
+	EvKQBaseFDDescriptionSetByFD(ev_sshclient->kq_base, ev_sshclient->socket_fd, "BRB_EV_COMM - SSH client");
 
 	return;
 }
@@ -292,8 +294,9 @@ void CommEvSSHClientDisconnect(CommEvSSHClient *ev_sshclient)
 	ev_sshclient->ssh.channel = NULL;
 
 	/* Will close socket and cancel any pending events of ev_sshclient->socket_fd, including the close event */
-	if ( ev_sshclient->socket_fd > 0)
+	if (ev_sshclient->socket_fd > 0)
 	{
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - CLOSING\n", ev_sshclient->socket_fd);
 		EvKQBaseSocketClose(ev_sshclient->kq_base, ev_sshclient->socket_fd);
 		ev_sshclient->socket_fd = -1;
 	}
@@ -338,9 +341,6 @@ void CommEvSSHClientAIOWriteAndDestroyMemBuffer(CommEvSSHClient *ev_sshclient, M
 	/* Populate destroy data */
 	aio_req->destroy_func		= (EvAIOReqDestroyFunc*)MemBufferDestroy;
 	aio_req->destroy_cbdata		= mem_buf;
-
-	//aio_req->pre_finish_cb		= CommEvSSHClientMemBufferWriteFinish;
-	//aio_req->pre_finish_cbdata	= mem_buf;
 
 	/* Enqueue and begin writing ASAP */
 	CommEvSSHClientEnqueueAndKickWriteQueue(ev_sshclient, aio_req);
@@ -527,8 +527,9 @@ static void CommEvSSHClientInternalDisconnect(CommEvSSHClient *ev_sshclient)
 	ev_sshclient->ssh.channel = NULL;
 
 	/* Will close socket and cancel any pending events of ev_sshclient->socket_fd, including the close event */
-	if ( ev_sshclient->socket_fd > 0)
+	if (ev_sshclient->socket_fd > 0)
 	{
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - CLOSING\n", ev_sshclient->socket_fd);
 		EvKQBaseSocketClose(ev_sshclient->kq_base, ev_sshclient->socket_fd);
 		ev_sshclient->socket_fd = -1;
 	}
@@ -756,61 +757,30 @@ static int CommEvSSHAsyncConnect(CommEvSSHClient *ev_sshclient)
 	CommEvSSHClientEventDispatchInternal(ev_sshclient, 0, -1, COMM_CLIENT_EVENT_CONNECT);
 
 	/* Upper layers want a reconnect retry if CONNECTION FAILS */
-	if (ev_sshclient->flags.reconnect_on_fail)
+	if (!ev_sshclient->flags.reconnect_on_fail)
+		return 0;
+
+
+	/* Will close socket and cancel any pending events of ev_tcpclient->socket_fd, including the close event */
+	if (ev_sshclient->socket_fd > 0)
 	{
-		/* Will close socket and cancel any pending events of ev_tcpclient->socket_fd, including the close event */
-		if ( ev_sshclient->socket_fd > 0)
-		{
-			EvKQBaseSocketClose(ev_sshclient->kq_base, ev_sshclient->socket_fd);
-			ev_sshclient->socket_fd = -1;
-		}
-
-		/* Destroy read and write buffers */
-		CommEvSSHClientDestroyConnReadAndWriteBuffers(ev_sshclient);
-
-		ev_sshclient->socket_state	= COMM_CLIENT_STATE_DISCONNECTED;
-		ev_sshclient->socket_fd		= -1;
-
-		/* Schedule RECONNECT timer */
-		ev_sshclient->timers.reconnect_on_fail_id = EvKQBaseTimerAdd(ev_sshclient->kq_base, COMM_ACTION_ADD_VOLATILE,
-				((ev_sshclient->retry_times.reconnect_on_fail_ms > 0) ? ev_sshclient->retry_times.reconnect_on_fail_ms : COMM_SSH_CLIENT_RECONNECT_FAIL_DEFAULT_MS),
-				CommEvSSHClientReconnectTimer, ev_sshclient);
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - CLOSING\n", ev_sshclient->socket_fd);
+		EvKQBaseSocketClose(ev_sshclient->kq_base, ev_sshclient->socket_fd);
+		ev_sshclient->socket_fd = -1;
 	}
+
+	/* Destroy read and write buffers */
+	CommEvSSHClientDestroyConnReadAndWriteBuffers(ev_sshclient);
+
+	ev_sshclient->socket_state	= COMM_CLIENT_STATE_DISCONNECTED;
+	ev_sshclient->socket_fd		= -1;
+
+	/* Schedule RECONNECT timer */
+	ev_sshclient->timers.reconnect_on_fail_id = EvKQBaseTimerAdd(ev_sshclient->kq_base, COMM_ACTION_ADD_VOLATILE,
+			((ev_sshclient->retry_times.reconnect_on_fail_ms > 0) ? ev_sshclient->retry_times.reconnect_on_fail_ms : COMM_SSH_CLIENT_RECONNECT_FAIL_DEFAULT_MS),
+			CommEvSSHClientReconnectTimer, ev_sshclient);
 
 	return 0;
-}
-/**************************************************************************************************************************/
-static int CommEvSSHClientCheckState(int socket_fd)
-{
-	int op_status = -1;
-	int err = 0;
-	socklen_t errlen = sizeof(err);
-
-	op_status = getsockopt(socket_fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
-
-	if (op_status == 0)
-	{
-		switch (err)
-		{
-		case 0:
-			return COMM_CLIENT_STATE_CONNECTED;
-
-		case EINPROGRESS:
-			/* FALL TROUGHT */
-		case EWOULDBLOCK:
-			/* FALL TROUGHT */
-		case EALREADY:
-			/* FALL TROUGHT */
-		case EINTR:
-			return COMM_CLIENT_STATE_CONNECTING;
-
-		case ECONNREFUSED:
-			return COMM_CLIENT_STATE_CONNECT_FAILED_REFUSED;
-
-		}
-	}
-
-	return COMM_CLIENT_STATE_CONNECT_FAILED_UNKNWON;
 }
 /**************************************************************************************************************************/
 static int CommEvSSHClientHandshake(CommEvSSHClient *ev_sshclient)
@@ -1024,7 +994,7 @@ static int CommEvSSHClientEventSSHNegotiate(int fd, int data_sz, int thrd_id, vo
 	/* Do the SSH handshake if not done yet */
 	if (!op_status)
 	{
-		//printf("CommEvSSHClientEventSSHNegotiate - CommEvSSHClientHandshake - FAILED [%d]\n", op_status);
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_ORANGE, "FAILED [%d]\n", op_status);
 
 		/* Set client error state */
 		ev_sshclient->socket_state = COMM_CLIENT_STATE_CONNECT_FAILED_NEGOTIATING_SECURE_TUNNEL;
@@ -1033,7 +1003,7 @@ static int CommEvSSHClientEventSSHNegotiate(int fd, int data_sz, int thrd_id, vo
 	/* Negotiating */
 	else if (op_status < 0)
 	{
-		//printf("CommEvSSHClientEventSSHNegotiate - CommEvSSHClientHandshake - IN PROGRESS [%d]\n", op_status);
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "IN PROGRESS [%d]\n", op_status);
 
 		/* Set client state */
 		ev_sshclient->socket_state = COMM_CLIENT_STATE_CONNECTED_NEGOTIATING_SECURE_TUNNEL;
@@ -1053,7 +1023,8 @@ static int CommEvSSHClientEventSSHNegotiate(int fd, int data_sz, int thrd_id, vo
 
 	if (!op_status)
 	{
-		//printf("CommEvSSHClientEventSSHNegotiate - CommEvSSHClientAuthUser - FAILED\n");
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_ORANGE, "FAILED\n");
+
 		/* Set client error state */
 		ev_sshclient->socket_state = COMM_CLIENT_STATE_CONNECT_FAILED_AUTHENTICATING_SECURE_TUNNEL;
 		goto conn_failed;
@@ -1061,7 +1032,7 @@ static int CommEvSSHClientEventSSHNegotiate(int fd, int data_sz, int thrd_id, vo
 	/* Negotiating */
 	else if (op_status < 0)
 	{
-		//printf("CommEvSSHClientEventSSHNegotiate - CommEvSSHClientAuthUser - IN PROGRESS\n");
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "IN PROGRESS\n");
 
 		/* Set client state */
 		ev_sshclient->socket_state = COMM_CLIENT_STATE_CONNECTED_NEGOTIATING_SECURE_TUNNEL;
@@ -1082,10 +1053,10 @@ static int CommEvSSHClientEventSSHNegotiate(int fd, int data_sz, int thrd_id, vo
 	/* Negotiating */
 	else if (op_status < 0)
 	{
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_ORANGE, "IN PROGRESS\n");
+
 		/* Set client state */
 		ev_sshclient->socket_state = COMM_CLIENT_STATE_CONNECTED_NEGOTIATING_SECURE_TUNNEL;
-
-		//printf("CommEvSSHClientEventSSHNegotiate - CommEvSSHClientOpenSession - IN PROGRESS\n");
 		goto conn_in_progress;
 	}
 
@@ -1131,29 +1102,29 @@ static int CommEvSSHClientEventSSHNegotiate(int fd, int data_sz, int thrd_id, vo
 	CommEvSSHClientInternalDisconnect(ev_sshclient);
 
 	/* Upper layers want a reconnect retry if CONNECTION FAILS */
-	if (ev_sshclient->flags.reconnect_on_fail)
+	if (!ev_sshclient->flags.reconnect_on_fail)
+		return 0;
+
+	/* Will close socket and cancel any pending events of ev_sshclient->socket_fd, including the close event */
+	if (ev_sshclient->socket_fd > 0)
 	{
-		/* Will close socket and cancel any pending events of ev_sshclient->socket_fd, including the close event */
-		if ( ev_sshclient->socket_fd > 0)
-		{
-			EvKQBaseSocketClose(ev_sshclient->kq_base, ev_sshclient->socket_fd);
-			ev_sshclient->socket_fd = -1;
-		}
-
-		/* Destroy read and write buffers */
-		CommEvSSHClientDestroyConnReadAndWriteBuffers(ev_sshclient);
-
-		ev_sshclient->socket_state	= COMM_CLIENT_STATE_DISCONNECTED;
-		ev_sshclient->socket_fd		= -1;
-
-		/* Schedule RECONNECT timer */
-		ev_sshclient->timers.reconnect_after_timeout_id = EvKQBaseTimerAdd(ev_sshclient->kq_base, COMM_ACTION_ADD_VOLATILE,
-				((ev_sshclient->retry_times.reconnect_after_timeout_ms > 0) ? ev_sshclient->retry_times.reconnect_after_timeout_ms : COMM_SSH_CLIENT_RECONNECT_TIMEOUT_DEFAULT_MS),
-				CommEvSSHClientTimerReconnect, ev_sshclient);
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - CLOSING\n", ev_sshclient->socket_fd);
+		EvKQBaseSocketClose(ev_sshclient->kq_base, ev_sshclient->socket_fd);
+		ev_sshclient->socket_fd = -1;
 	}
 
-	return 0;
+	/* Destroy read and write buffers */
+	CommEvSSHClientDestroyConnReadAndWriteBuffers(ev_sshclient);
 
+	ev_sshclient->socket_state	= COMM_CLIENT_STATE_DISCONNECTED;
+	ev_sshclient->socket_fd		= -1;
+
+	/* Schedule RECONNECT timer */
+	ev_sshclient->timers.reconnect_after_timeout_id = EvKQBaseTimerAdd(ev_sshclient->kq_base, COMM_ACTION_ADD_VOLATILE,
+			((ev_sshclient->retry_times.reconnect_after_timeout_ms > 0) ? ev_sshclient->retry_times.reconnect_after_timeout_ms : COMM_SSH_CLIENT_RECONNECT_TIMEOUT_DEFAULT_MS),
+			CommEvSSHClientTimerReconnect, ev_sshclient);
+
+	return 0;
 }
 /**************************************************************************************************************************/
 static int CommEvSSHClientGetDirection(CommEvSSHClient *ev_sshclient, int res)
@@ -1172,7 +1143,8 @@ static int CommEvSSHClientGetDirection(CommEvSSHClient *ev_sshclient, int res)
 	{
 		ev_sshclient->ssh.last_err.code = libssh2_session_last_errno(ev_sshclient->ssh.session);
 		libssh2_session_last_error(ev_sshclient->ssh.session, &ev_sshclient->ssh.last_err.str, &ev_sshclient->ssh.last_err.str_sz, 0);
-		printf("CommEvSSHClientGetDirection - FATAL LIBSSH2 ERROR [%s]\n", ev_sshclient->ssh.last_err.str);
+
+		KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_DEBUG, LOGCOLOR_ORANGE, "FATAL LIBSSH2 ERROR [%d]/[%d] - [%s]\n", res, ev_sshclient->ssh.last_err.code, ev_sshclient->ssh.last_err.str);
 
 		return COMM_SSHCLIENT_DIRECTION_FAIL;
 	}
@@ -1293,7 +1265,7 @@ static int CommEvSSHClientEventConnect(int fd, int data_sz, int thrd_id, void *c
 	CommEvSSHClient *ev_sshclient = cb_data;
 
 	/* Query the kernel for the current socket state */
-	ev_sshclient->socket_state = CommEvSSHClientCheckState(fd);
+	ev_sshclient->socket_state = CommEvUtilsFDCheckState(fd);
 
 	/* Connection not yet completed, reschedule and return */
 	if (COMM_CLIENT_STATE_CONNECTING == ev_sshclient->socket_state)
@@ -1495,14 +1467,6 @@ static int CommEvSSHClientEventEof(int fd, int buf_read_sz, int thrd_id, void *c
 	return 1;
 }
 /**************************************************************************************************************************/
-//static void CommEvSSHClientMemBufferWriteFinish(int fd, int write_sz, int thrd_id, void *cb_data, void *base_ptr)
-//{
-//	MemBuffer *data_mb = cb_data;
-//	MemBufferDestroy(data_mb);
-//
-//	return;
-//}
-/**************************************************************************************************************************/
 static int CommEvSSHClientCheckIfNeedDNSLookup(CommEvSSHClient *ev_sshclient)
 {
 	int dots_found;
@@ -1594,39 +1558,39 @@ static void CommEvSSHClientDNSResolverCB(void *ev_dns_ptr, void *req_cb_data, vo
 
 		return;
 	}
+
 	/* Resolve failed, notify upper layers */
-	else
+
+	//printf("CommEvSSHClientDNSResolverCB - FAILED [%d]\n", a_reply->ip_count);
+
+	/* Set flags */
+	ev_sshclient->socket_state	= COMM_CLIENT_STATE_CONNECT_FAILED_DNS;
+	ev_sshclient->dns.expire_ts = -1;
+
+	/* Dispatch internal event */
+	CommEvSSHClientEventDispatchInternal(ev_sshclient, 0, -1, COMM_CLIENT_EVENT_CONNECT);
+
+	/* Upper layers want a reconnect retry if CONNECTION FAILS */
+	if (ev_sshclient->flags.reconnect_on_fail)
 	{
-		//printf("CommEvSSHClientDNSResolverCB - FAILED [%d]\n", a_reply->ip_count);
-
-		/* Set flags */
-		ev_sshclient->socket_state	= COMM_CLIENT_STATE_CONNECT_FAILED_DNS;
-		ev_sshclient->dns.expire_ts = -1;
-
-		/* Dispatch internal event */
-		CommEvSSHClientEventDispatchInternal(ev_sshclient, 0, -1, COMM_CLIENT_EVENT_CONNECT);
-
-		/* Upper layers want a reconnect retry if CONNECTION FAILS */
-		if (ev_sshclient->flags.reconnect_on_fail)
+		/* Will close socket and cancel any pending events of ev_sshclient->socket_fd, including the close event */
+		if (ev_sshclient->socket_fd > 0)
 		{
-			/* Will close socket and cancel any pending events of ev_sshclient->socket_fd, including the close event */
-			if ( ev_sshclient->socket_fd > 0)
-			{
-				EvKQBaseSocketClose(ev_sshclient->kq_base, ev_sshclient->socket_fd);
-				ev_sshclient->socket_fd = -1;
-			}
-
-			/* Destroy read and write buffers */
-			CommEvSSHClientDestroyConnReadAndWriteBuffers(ev_sshclient);
-
-			ev_sshclient->socket_state	= COMM_CLIENT_STATE_DISCONNECTED;
-			ev_sshclient->socket_fd		= -1;
-
-			/* Schedule RECONNECT timer */
-			ev_sshclient->timers.reconnect_on_fail_id = EvKQBaseTimerAdd(ev_sshclient->kq_base, COMM_ACTION_ADD_VOLATILE,
-					((ev_sshclient->retry_times.reconnect_on_fail_ms > 0) ? ev_sshclient->retry_times.reconnect_on_fail_ms : COMM_SSH_CLIENT_RECONNECT_FAIL_DEFAULT_MS),
-					CommEvSSHClientReconnectTimer, ev_sshclient);
+			KQBASE_LOG_PRINTF(ev_sshclient->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - CLOSING\n", ev_sshclient->socket_fd);
+			EvKQBaseSocketClose(ev_sshclient->kq_base, ev_sshclient->socket_fd);
+			ev_sshclient->socket_fd = -1;
 		}
+
+		/* Destroy read and write buffers */
+		CommEvSSHClientDestroyConnReadAndWriteBuffers(ev_sshclient);
+
+		ev_sshclient->socket_state	= COMM_CLIENT_STATE_DISCONNECTED;
+		ev_sshclient->socket_fd		= -1;
+
+		/* Schedule RECONNECT timer */
+		ev_sshclient->timers.reconnect_on_fail_id = EvKQBaseTimerAdd(ev_sshclient->kq_base, COMM_ACTION_ADD_VOLATILE,
+				((ev_sshclient->retry_times.reconnect_on_fail_ms > 0) ? ev_sshclient->retry_times.reconnect_on_fail_ms : COMM_SSH_CLIENT_RECONNECT_FAIL_DEFAULT_MS),
+				CommEvSSHClientReconnectTimer, ev_sshclient);
 	}
 
 	return;

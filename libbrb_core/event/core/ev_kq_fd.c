@@ -165,7 +165,7 @@ int EvKQBaseFDEventInvoke(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd, int ev_cod
 /**/
 /**/
 /**************************************************************************************************************************/
-int EvKQBaseFDGenericInit(EvKQBase *kq_base, int fd, int type)
+int EvKQBaseFDGenericInit(EvKQBase *kq_base, int fd, EvBaseFDType type)
 {
 	EvBaseKQFileDesc *kq_fd;
 
@@ -259,6 +259,11 @@ int EvKQBaseSocketUDPNew(EvKQBase *kq_base)
 	return EvKQBaseSocketGenericNew(kq_base, AF_INET, SOCK_DGRAM, IPPROTO_IP, FD_TYPE_UDP_SOCKET);
 }
 /**************************************************************************************************************************/
+int EvKQBaseSocketUDPExt(EvKQBase *kq_base, int af)
+{
+	return EvKQBaseSocketGenericNew(kq_base, af, SOCK_DGRAM, IPPROTO_UDP, FD_TYPE_UDP_SOCKET);
+}
+/**************************************************************************************************************************/
 int EvKQBaseSocketRawNew(EvKQBase *kq_base)
 {
 	/* Initialize internal KQ_FD */
@@ -281,6 +286,12 @@ int EvKQBaseSocketTCPNew(EvKQBase *kq_base)
 {
 	/* Initialize internal KQ_FD */
 	return EvKQBaseSocketGenericNew(kq_base, AF_INET, SOCK_STREAM, IPPROTO_IP, FD_TYPE_TCP_SOCKET);
+}
+/**************************************************************************************************************************/
+int EvKQBaseSocketTCPv6New(EvKQBase *kq_base)
+{
+	/* Initialize internal KQ_FD */
+	return EvKQBaseSocketGenericNew(kq_base, AF_INET6, SOCK_STREAM, IPPROTO_IP, FD_TYPE_TCP_SOCKET);
 }
 /**************************************************************************************************************************/
 int EvKQBaseSocketUNIXNew(EvKQBase *kq_base)
@@ -328,9 +339,9 @@ int EvKQBaseSocketUDPNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsig
 	}
 
 	/* Initialize receiving socket on the device chosen */
-	memset((char *) &addr_me, 0, sizeof(addr_me));
-	addr_me.sin_family	= AF_INET;
-	addr_me.sin_port	= htons(port);
+	memset((char *)&addr_me, 0, sizeof(addr_me));
+	addr_me.sin_family		= AF_INET;
+	addr_me.sin_port		= htons(port);
 
 	/* Copy BINDIP if selected */
 	if (bindip)
@@ -341,6 +352,111 @@ int EvKQBaseSocketUDPNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsig
 	{
 		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed binding on FD [%d] - ADDR [%s] - ERRNO [%d / %s]\n",
 				fd, inet_ntoa(addr_me.sin_addr), errno, strerror(errno));
+		close(fd);
+		return -4;
+	}
+
+	KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Initialized UDP Socket FD [%d] on PORT [%d]\n", fd, port);
+
+	return fd;
+}
+/**************************************************************************************************************************/
+int EvKQBaseSocketUDPExtAndBind(EvKQBase *kq_base, struct in_addr *bindip, unsigned short port, int af)
+{
+	struct sockaddr_storage addr_me;
+	int op_status;
+	int fd;
+
+	/* Try to create a new server socket */
+//	fd			= EvKQBaseSocketCustomNew(kq_base, v6);
+	fd			= EvKQBaseSocketUDPExt(kq_base, af == AF_INET6 ? AF_INET6 : AF_INET);
+
+	/* Failed creating FD */
+	if (fd < 0)
+	{
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed initializing UDP FD - ERRNO [%d / %s]\n", errno, strerror(errno));
+		return -1;
+	}
+
+	/* Set socket to REUSE_ADDR flag */
+	op_status 	= EvKQBaseSocketSetReuseAddr(kq_base, fd);
+
+	/* Failed setting flag */
+	if (op_status < 0)
+	{
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed setting REUSE_ADDR on FD [%d] - ERRNO [%d / %s]\n", fd, errno, strerror(errno));
+		close(fd);
+		return -2;
+	}
+
+	/* Set socket to REUSE_ADDR flag */
+	op_status 	= EvKQBaseSocketSetReusePort(kq_base, fd);
+
+	/* Failed setting flag */
+	if (op_status < 0)
+	{
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed setting REUSE_PORT on FD [%d] - ERRNO [%d / %s]\n", fd, errno, strerror(errno));
+		close(fd);
+		return -3;
+	}
+
+	/* Set socket to REUSE_ADDR flag */
+	op_status 	= EvKQBaseSocketSetDstAddr(kq_base, fd);
+
+	/* Failed setting flag */
+	if (op_status < 0)
+	{
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed setting REUSE_PORT on FD [%d] - ERRNO [%d / %s]\n", fd, errno, strerror(errno));
+		close(fd);
+		return -3;
+	}
+
+	/* Initialize receiving socket on the device chosen */
+	memset(&addr_me, 0, sizeof(struct sockaddr_storage));
+
+	if (af == AF_INET6)
+	{
+		addr_me.ss_family								= AF_INET6;
+#ifndef IS_LINUX
+		addr_me.ss_len									= sizeof(struct sockaddr_in6);
+#endif
+		satosin6(&addr_me)->sin6_port					= htons(port);
+		satosin6(&addr_me)->sin6_addr 					= in6addr_any;
+
+		/* Copy BINDIP if selected */
+		if (bindip)
+			memcpy(&satosin6(&addr_me)->sin6_addr, bindip, sizeof(struct in6_addr));
+
+		op_status 	= bind(fd, (struct sockaddr *)&addr_me, sizeof(struct sockaddr_in6));
+	}
+	else
+	{
+		addr_me.ss_family								= AF_INET;
+#ifndef IS_LINUX
+		addr_me.ss_len									= sizeof(struct sockaddr_in);
+#endif
+		satosin(&addr_me)->sin_port						= htons(port);
+
+		/* Copy BINDIP if selected */
+		if (bindip)
+			memcpy(&satosin(&addr_me)->sin_addr, bindip, sizeof(struct in_addr));
+
+		op_status 	= bind(fd, (struct sockaddr *)&addr_me, sizeof(struct sockaddr_in));
+	}
+
+	/* Bind to UDP port */
+	if (-1 == op_status)
+	{
+		char ip_str[64] = {0};
+
+		if (addr_me.ss_family == AF_INET6)
+			inet_ntop(AF_INET6, &satosin6(&addr_me)->sin6_addr, (char *)&ip_str, INET6_ADDRSTRLEN);
+		else
+			inet_ntop(AF_INET, &satosin(&addr_me)->sin_addr, (char *)&ip_str, INET_ADDRSTRLEN);
+
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "Failed binding on FD [%d] - ADDR [%d]-[%s] - ERRNO [%d / %s]\n",
+				fd, addr_me.ss_family, (char *)&ip_str, errno, strerror(errno));
+
 		close(fd);
 		return -4;
 	}
@@ -399,7 +515,7 @@ int EvKQBaseSocketRawNewAndBind(EvKQBase *kq_base)
 		return -4;
 	}
 
-	KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_DEBUG, LOGCOLOR_GREEN, "Initialized RAW Socket FD [%d]\n", fd);
+	KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Initialized RAW Socket FD [%d]\n", fd);
 
 	return fd;
 }
@@ -492,7 +608,7 @@ int EvKQBaseSocketCustomNewAndBind(EvKQBase *kq_base, struct in_addr *bindip, un
 		return -4;
 	}
 
-	KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_DEBUG, LOGCOLOR_GREEN, "Initialized UDP Socket FD [%d] on PORT [%d]\n", fd, port);
+	KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Initialized UDP Socket FD [%d] on PORT [%d]\n", fd, port);
 
 	return fd;
 }
@@ -509,7 +625,11 @@ void EvKQBaseSocketClose(EvKQBase *kq_base, int fd)
 
 	/* Do not allow invalid FDs in this routine */
 	if (fd < 0)
+	{
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_YELLOW, "FD [%d] - DESC [%s] - Called to close negative FD\n",
+				fd, desc_str);
 		return;
+	}
 
 	/* Grab FD from reference table - Set flags as CLOSING */
 	kq_fd					= EvKQBaseFDGrabFromArena(kq_base, fd);
@@ -1221,7 +1341,7 @@ int EvKQBaseSocketBindLocal(EvKQBase *kq_base, int fd, struct sockaddr *sock_add
 	kq_fd = EvKQBaseFDGrabFromArena(kq_base, fd);
 
 	/* Bind socket to local IP */
-	if (bind(fd, sock_addr, sizeof(struct sockaddr_in)) != 0)
+	if (bind(fd, sock_addr, (sock_addr->sa_family == AF_INET6) ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in)) != 0)
 		return 0;
 
 	/* We should be active if operator is trying to control this FD */
@@ -1249,12 +1369,15 @@ int EvKQBaseSocketBindRemote(EvKQBase *kq_base, int fd, struct sockaddr *sock_ad
 	if (setsockopt(fd, IPPROTO_IP, IP_FREEBIND, (char *)&on, sizeof(on)) != 0)
 		return 0;
 #else
+	int proto = (sock_addr->sa_family == AF_INET6) ? IPPROTO_IPV6 : IPPROTO_IP;
+	int bindtype = (sock_addr->sa_family == AF_INET6) ? IPV6_V6ONLY : IP_BINDANY;
 	/* Invoke the kernel for a NON LOCAL BIND for this IP */
-	if (setsockopt(fd, IPPROTO_IP, IP_BINDANY, (char *)&on, sizeof(on)) != 0)
+	if (setsockopt(fd, proto, bindtype, (char *)&on, sizeof(on)) != 0)
 		return 0;
 #endif
+
 	/* Bind SOCKET to remote IP */
-	if (bind(fd, sock_addr, sizeof(struct sockaddr_in)) != 0)
+	if (bind(fd, sock_addr, (sock_addr->sa_family == AF_INET6) ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in)) != 0)
 		return 0;
 
 	/* We should be active if operator is trying to control this FD */
@@ -1313,8 +1436,8 @@ static int EvKQBaseFDDoClose(EvKQBase *kq_base, EvBaseKQFileDesc *kq_fd)
 	op_status = close(kq_fd->fd.num);
 
 	/* Failed closing FD */
-	if (-1 == op_status)
-		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - [%s] - Close failed with ERRNO [%d]\n", kq_fd->fd.num, desc_str, errno);
+	if ((op_status < 0) && errno != ECONNRESET)
+		KQBASE_LOG_PRINTF(kq_base->log_base, LOGTYPE_WARNING, LOGCOLOR_RED, "FD [%d] - TYPE [%d] - FLAGS [%u] - DESC [%s] - Close failed with ERRNO [%d]\n", kq_fd->fd.num, kq_fd->fd.type, kq_fd->fd.fflags, desc_str, errno);
 
 	/* CleanUP KQ_FD and set flag as CLOSED */
 	EvKQBaseFDCleanupByKQFD(kq_base, kq_fd);

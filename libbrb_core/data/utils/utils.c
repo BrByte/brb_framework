@@ -51,136 +51,16 @@ int BrbHexToStr(char *hex, int hex_sz, char *dst_buf, int dst_buf_sz)
 	return offset;
 }
 /**************************************************************************************************************************/
-char *BrbHexToStrStatic(char *hex, int hex_sz)
+char *BrbHexToStrAlloc(char *hex, int hex_sz)
 {
-	char dst_buf[(hex_sz * 2) + 1];
-	int size;
+	int size = (hex_sz * 3);
 	int i;
-	char *ret_ptr = (char*)&dst_buf;
-
-	memset(&dst_buf, 0, sizeof(dst_buf));
-	size = BrbHexToStr(hex, hex_sz, (char*)&dst_buf, sizeof(dst_buf));
+	char *ret_ptr = calloc(1, size + 3);
+	size = BrbHexToStr(hex, hex_sz, ret_ptr, size);
 
 	return ret_ptr;
 }
 /**************************************************************************************************************************/
-int BrbStrReplaceAllNonAlpha(char *buf_str, int buf_sz)
-{
-	unsigned long j = 0;
-	unsigned long i = 0;
-	char c;
-
-	/* sanitize */
-	if (!buf_str)
-		return 0;
-
-	while (i < buf_sz && (c = buf_str[i++]) != '\0')
-	{
-		if (isalnum(c) || c == '_')
-		{
-			buf_str[j++] = c;
-		}
-	}
-
-	buf_str[j] 	= '\0';
-
-	return 1;
-}
-/**************************************************************************************************************************/
-char *BrbStrAddSlashes(char *src_str, int src_sz)
-{
-	char *dst_buf;
-	int i, j;
-
-	if (!src_str)
-		return NULL;
-
-	/* Allocate memory */
-	dst_buf 	= calloc(1, ((src_sz * 2) + 1));
-
-	for (i = 0, j = 0; i < src_sz; i++, j++)
-	{
-		/* Double slash */
-		switch (src_str[i])
-		{
-		case '\0': dst_buf[j++] = '\\';    break;
-		case '\a': dst_buf[j++] = '\\';    break;
-		case '\b': dst_buf[j++] = '\\';    break;
-		case '\f': dst_buf[j++] = '\\';    break;
-		case '\n': dst_buf[j++] = '\\';    break;
-		case '\r': dst_buf[j++] = '\\';    break;
-		case '\t': dst_buf[j++] = '\\';    break;
-		case '\v': dst_buf[j++] = '\\';    break;
-		case '\\': dst_buf[j++] = '\\';    break;
-		//			case '\?': dst_buf[j++] = '\\';    break;
-		case '\'': dst_buf[j++] = '\\';    break;
-		case '\"': dst_buf[j++] = '\\';    break;
-
-		}
-
-		//    	if ('\\' == src_str[i])
-		//    		dst_buf[j++] = '\\';
-
-		/* Copy byte */
-		dst_buf[j] = src_str[i];
-
-		continue;
-	}
-
-	/* NULL terminate it */
-	dst_buf[j] = '\0';
-
-	return dst_buf;
-}
-/**************************************************************************************************************************/
-char *BrbStrAddJSONSlashes(char *src_str, int src_sz)
-{
-	char *dst_buf;
-	int i, j;
-
-	if (!src_str)
-		return NULL;
-
-	/* Allocate memory */
-	dst_buf 	= calloc(1, ((src_sz * 2) + 1));
-
-	for (i = 0, j = 0; i < src_sz; i++, j++)
-	{
-		/* Double slash */
-		switch (src_str[i])
-		{
-		case '\0': dst_buf[j++] = '\\'; dst_buf[j] = '0';  break;
-		case '\a': dst_buf[j++] = '\\'; dst_buf[j] = 'a';  break;
-		case '\b': dst_buf[j++] = '\\'; dst_buf[j] = 'b';  break;
-		case '\f': dst_buf[j++] = '\\'; dst_buf[j] = 'f';  break;
-		case '\n': dst_buf[j++] = '\\'; dst_buf[j] = 'n';  break;
-		case '\r': dst_buf[j++] = '\\'; dst_buf[j] = 'r';  break;
-		case '\t': dst_buf[j++] = '\\'; dst_buf[j] = 't';  break;
-		case '\v': dst_buf[j++] = '\\'; dst_buf[j] = 'v';  break;
-		case '\\': dst_buf[j++] = '\\'; dst_buf[j] = '\\'; break;
-//		case '\?': dst_buf[j++] = '\\'; dst_buf[j] = '?';  break;
-//		case '\'': dst_buf[j++] = '\\'; dst_buf[j] = '\''; break;
-		case '\"': dst_buf[j++] = '\\'; dst_buf[j] = '\"'; break;
-		default: 						dst_buf[j] = src_str[i]; break;
-
-		}
-
-		//    	if ('\\' == src_str[i])
-		//    		dst_buf[j++] = '\\';
-
-		/* Copy byte */
-//		dst_buf[j] = src_str[i];
-
-		continue;
-	}
-
-	/* NULL terminate it */
-	dst_buf[j] = '\0';
-
-	return dst_buf;
-}
-/**************************************************************************************************************************/
-
 int BrbIsValidCpf(char *cpf_str)
 {
 	/* sanitize */
@@ -272,7 +152,7 @@ int BrbIsValidCnpj(char *cnpj_str)
 	return 1;
 }
 /**************************************************************************************************************************/
-int BrbIsNumeric(char *str)
+int BrbIsNumeric(const char *str)
 {
 	int status 	= 0;
 
@@ -294,7 +174,7 @@ int BrbIsNumeric(char *str)
 	return status;
 }
 /**************************************************************************************************************************/
-int BrbIsHex(char *str)
+int BrbIsHex(const char *str)
 {
 	int status 	= 0;
 
@@ -328,7 +208,7 @@ int BrbIsHex(char *str)
 	return status;
 }
 /**************************************************************************************************************************/
-int BrbIsDecimal(char *str)
+int BrbIsDecimal(const char *str)
 {
 	long length;
 
@@ -350,146 +230,46 @@ int BrbIsDecimal(char *str)
 	return 1;
 }
 /**************************************************************************************************************************/
-int BrbStrSkipQuotes(char *buf_str, int buf_sz)
+int BrbIsNumberList(const char *num_str, char sep)
 {
-	int j;
-	int i;
+    // Flag to check if a number is currently being parsed
+    int parsing_number = 0;
+    int i = 0;
 
-	/* sanitize */
-	if (!buf_str)
-		return 0;
+    if (!num_str)
+    	return -1;
 
-	for (i = 0, j = 0; i < buf_sz; i++)
-	{
-		if (buf_str[i] != '"')
-			buf_str[j++] = buf_str[i];
-	}
+    while (num_str[i])
+    {
+        // Check if it's a digit
+        if (num_str[i] >= '0' && num_str[i] <= '9')
+        {
+            parsing_number = 1;
+        }
+        // Check if it's the separator
+        else if (num_str[i] == sep)
+        {
+            // If no number was parsed before encountering a separator, return pointer to separator
+            if (!parsing_number)
+                return i+1;
 
-	buf_str[j] 	= '\0';
+            // Reset the parsing_number flag for the next number
+            parsing_number = 0;
+        }
+        else
+        {
+            // If it's neither a digit nor a separator, return pointer to the violating character
+            return i+1;
+        }
 
-	return 1;
+        i++;
+    }
+
+    // If parsing_number is true at the end, it means the string ends with a number without a separator
+    return (parsing_number ? 0 : i+1);
 }
 /**************************************************************************************************************************/
-int BrbStrFindSubStr(char *buffer_str, int buffer_sz, char *substring_str, int substring_sz)
-{
-	int idx;
-	int token_idx;
-
-	/* check headers */
-	for (idx = 0, token_idx = 0; (idx < buffer_sz) && (token_idx < substring_sz); idx++)
-	{
-		token_idx = 0;
-
-		/* skip until we find first char terminator*/
-		if (buffer_str[idx] != substring_str[token_idx])
-			continue;
-
-		while( (token_idx < substring_sz) && (idx < buffer_sz) )
-		{
-			token_idx++;
-			idx++;
-
-			/* skip until we find first char terminator*/
-			if (buffer_str[idx] != substring_str[token_idx])
-			{
-				/* Found all substring ? */
-				if (token_idx == substring_sz)
-					return (idx - 1);
-
-				idx 	= (idx - token_idx);
-
-				break;
-			}
-		}
-
-		/* Found all substring ? */
-		if (token_idx == substring_sz)
-			return (idx - 1);
-
-		continue;
-	}
-
-	/* Can't Found Substring */
-	return -1;
-}
-/**************************************************************************************************************************/
-int BrbStrUrlDecode(char *str)
-{
-	char hexnum[3];
-	int i, j;			/* i is write, j is read */
-	unsigned int x;
-
-
-	for (i = j = 0; str[j]; i++, j++)
-	{
-
-		str[i] = str[j];
-
-		if (str[i] != '%')
-			continue;
-
-		/* %% case */
-		if (str[j + 1] == '%')
-		{
-			j++;
-			continue;
-		}
-
-		if (str[j + 1] && str[j + 2])
-		{
-			/* %00 case */
-			if (str[j + 1] == '0' && str[j + 2] == '0')
-			{
-				j += 2;
-				continue;
-			}
-
-			hexnum[0] = str[j + 1];
-			hexnum[1] = str[j + 2];
-			hexnum[2] = '\0';
-
-			if (1 == sscanf(hexnum, "%x", &x))
-			{
-				str[i] = (char) (0x0ff & x);
-				j += 2;
-			}
-
-		}
-	}
-
-	str[i] = '\0';
-
-	return strlen(str);
-}
-/**************************************************************************************************************************/
-char *BrbStrSkipNoNumeric(char *buffer_str, int buffer_sz)
-{
-	int idx;
-
-	/* buffer negative Grab size */
-	if (buffer_sz < 0)
-	{
-		buffer_sz 	= buffer_str ? strlen(buffer_str) : 0;
-	}
-
-	/* sanitize */
-	if (buffer_sz <= 0)
-		return NULL;
-
-	/* check headers */
-	for (idx = 0; idx < buffer_sz; idx++)
-	{
-		/* skip until we find char terminator or number */
-		if ((buffer_str[idx] != '\0') && ((buffer_str[idx] < '0') || (buffer_str[idx] > '9')))
-			continue;
-
-		return (buffer_str + idx);
-	}
-
-	return NULL;
-}
-/**************************************************************************************************************************/
-long BrbDateToTimestamp(char *date_str)
+long BrbDateToTimestamp(const char *date_str)
 {
 	struct timeval cur_timeval;
 	struct tm *cur_time;
@@ -503,7 +283,7 @@ long BrbDateToTimestamp(char *date_str)
 	char date_a_second_str[3];
 	long ret_val;
 
-	/* Date too smal, bail out */
+	/* Date too small, bail out */
 	if (strlen(date_str) < 19)
 		return 0;
 
@@ -719,6 +499,49 @@ int BrbStrFindSubStrReverse(char *buffer_str, int buffer_sz, char *substring_str
 	return -1;
 }
 /**************************************************************************************************************************/
+char *BrbStrGetKeyByValue(BrbKeyValue val_key[], int k_value)
+{
+	int i;
+
+	/* Search for type on global array */
+	for (i = 0; val_key[i].key_ptr != NULL; i++)
+	{
+		/* Size do not match, move on */
+		if (k_value != val_key[i].value)
+			continue;
+
+		/* Found it, return ID */
+		return val_key[i].key_ptr;
+	}
+
+	return NULL;
+}
+/**************************************************************************************************************************/
+int BrbStrGetValueByKey(BrbKeyValue val_key[], char *key_ptr)
+{
+	int type_name_sz;
+	int i;
+
+	if (!key_ptr)
+		return 0;
+
+	type_name_sz 	= strlen(key_ptr);
+
+	/* Search for type on global array */
+	for (i = 0; val_key[i].key_ptr && (val_key[i].key_ptr[0] != '\0'); i++)
+	{
+		/* Size do not match, move on */
+		if (type_name_sz != val_key[i].key_sz)
+			continue;
+
+		/* Found it, return ID */
+		if (!strncmp(val_key[i].key_ptr, key_ptr, val_key[i].key_sz))
+			return val_key[i].value;
+	}
+
+	return 0;
+}
+/**************************************************************************************************************************/
 /* Time Utils */
 /**************************************************************************************************************************/
 unsigned int BrbTimeLt(const struct timeval *a, const struct timeval *b)
@@ -736,5 +559,55 @@ void BrbTimeSub(const struct timeval *a, const struct timeval *b, struct timeval
         --result->tv_sec;
         result->tv_usec 	+= 1000000;
     }
+}
+/**************************************************************************************************************************/
+int BrbStrValidateDomain(const char *buf_ptr, int buf_len)
+{
+	/* Sanitize */
+    if (buf_ptr == NULL || strlen(buf_ptr) == 0)
+        return -1;
+
+    if (buf_len < 0)
+    	buf_len 	= strlen(buf_ptr);
+
+    /* Empty */
+    if (buf_len <= 0)
+        return -1;
+
+    int dotCount = 0;
+
+    // Domain name should not start or end with a dot or '-'
+    if (buf_ptr[0] == '.' || buf_ptr[buf_len - 1] == '.' || buf_ptr[0] == '-' || buf_ptr[buf_len - 1] == '-')
+        return -1;
+
+    // Iterate through each character to check validity
+    for (int i = 0; i < buf_len; i++)
+    {
+        char current = buf_ptr[i];
+
+        // Each character should be alphanumeric, dot, or '-'
+        if (!(isalnum(current) || current == '.' || current == '-'))
+            return -2;
+
+        // Dot should not appear consecutively
+        if (current == '.' && (i == 0 || i == buf_len - 1 || buf_ptr[i - 1] == '-' || buf_ptr[i + 1] == '-' || buf_ptr[i + 1] == '.'))
+            return -3;
+
+        // Hyphen should not be before or after a dot
+        if (current == '-' && (i == 0 || i == buf_len - 1 || buf_ptr[i - 1] == '.' || buf_ptr[i + 1] == '.'))
+            return -4;
+
+        // Count the number of dots
+        if (current == '.')
+        {
+            dotCount++;
+        }
+    }
+
+    // Domain should contain at least one dot
+    if (dotCount == 0)
+        return -5;
+
+    return 0;
 }
 /**************************************************************************************************************************/

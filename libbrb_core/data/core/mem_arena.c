@@ -350,6 +350,29 @@ void MemArenaLockByID(MemArena *mem_arena, long id)
 	return;
 }
 /**************************************************************************************************************************/
+int MemArenaToJsonMemBuffer(MemArena *mem_arena, MemBuffer *json_reply_mb)
+{
+	if (!mem_arena || !json_reply_mb)
+		return -1;
+
+	/* Size */
+	MEMBUFFER_JSON_ADD_LONG(json_reply_mb, "size_cur", mem_arena->size[MEMARENA_SIZE_CURRENT]);
+	MEMBUFFER_JSON_ADD_COMMA(json_reply_mb);
+	MEMBUFFER_JSON_ADD_LONG(json_reply_mb, "size_init", mem_arena->size[MEMARENA_SIZE_INITIAL]);
+	MEMBUFFER_JSON_ADD_COMMA(json_reply_mb);
+	MEMBUFFER_JSON_ADD_LONG(json_reply_mb, "size_capacity", mem_arena->size[MEMARENA_SIZE_CAPACITY]);
+	MEMBUFFER_JSON_ADD_COMMA(json_reply_mb);
+
+	/* Slot */
+	MEMBUFFER_JSON_ADD_ULONG(json_reply_mb, "list_size", mem_arena->slot_list.size);
+	MEMBUFFER_JSON_ADD_COMMA(json_reply_mb);
+	MEMBUFFER_JSON_ADD_LONG(json_reply_mb, "slot_size", mem_arena->slot[MEMARENA_SLOT_SIZE]);
+	MEMBUFFER_JSON_ADD_COMMA(json_reply_mb);
+	MEMBUFFER_JSON_ADD_LONG(json_reply_mb, "slot_count", mem_arena->slot[MEMARENA_SLOT_COUNT]);
+
+	return 0;
+}
+/**************************************************************************************************************************/
 int MemArenaUnlockByID(MemArena *mem_arena, long id)
 {
 	MemArenaSlotHeader *header;

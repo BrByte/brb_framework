@@ -35,7 +35,7 @@
 #include "../include/libbrb_core.h"
 
 /**************************************************************************************************************************/
-KEY_VALUE *__KVRowNew ()
+KEY_VALUE *__KVRowNew (void)
 {
 	KEY_VALUE *ptr;
 
@@ -46,10 +46,9 @@ KEY_VALUE *__KVRowNew ()
 	ptr->lock_status = 0;
 
 	return ptr;
-
 }
 /**************************************************************************************************************************/
-KV_ARRAY_DATA *KVArrayNew ()
+KV_ARRAY_DATA *KVArrayNew (void)
 {
 	KV_ARRAY_DATA *ptr;
 
@@ -423,7 +422,7 @@ int KVDestroy(KV_ARRAY_DATA *arrayData)
 	return 1;
 }
 /**************************************************************************************************************************/
-int KVJsonExport(KV_ARRAY_DATA *arrayData)
+int KVJsonExport(KV_ARRAY_DATA *arrayData, const char *join_str, const char *separator_str)
 {
 
 	void *content_list_head;
@@ -434,6 +433,16 @@ int KVJsonExport(KV_ARRAY_DATA *arrayData)
 	if (!arrayData)
 		return 0;
 
+	/* Default join */
+	if (!join_str)
+		join_str		= ":";
+
+	/* Default separator */
+	if (!separator_str)
+		separator_str	= ",";
+
+	MemBufferClean(arrayData->json_data);
+
 	for (content_list_head = arrayData->parsed_content_list; content_list_head; content_list_head = LinkedListNext(content_list_head))
 	{
 		/* Get data of list */
@@ -442,10 +451,10 @@ int KVJsonExport(KV_ARRAY_DATA *arrayData)
 		if (!kv_ptr)
 			continue;
 
-		MemBufferPrintf(arrayData->json_data, "\"%s\":\"%s\"", kv_ptr->key, kv_ptr->value);
+		MemBufferPrintf(arrayData->json_data, "\"%s\"%s\"%s\"", kv_ptr->key, join_str, kv_ptr->value);
 
 		if (LinkedListNext(content_list_head))
-			MemBufferPrintf(arrayData->json_data, ","); /* Pair delimiter */
+			MemBufferPrintf(arrayData->json_data, "%s", separator_str); /* Pair delimiter */
 
 	}
 
