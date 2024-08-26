@@ -47,7 +47,7 @@ static void DNSResolverCB(void *ev_dns_ptr, void *req_cb_data, void *a_reply_ptr
 	DNSAReply *a_reply = a_reply_ptr;
 	static int count = 0;
 
-	CommEvDNSGetHostByName(glob_ev_dns, "lic-elb.brbyte.com", DNSResolverCB, NULL);
+	CommEvDNSGetHostByName(glob_ev_dns, "softov.com.br", DNSResolverCB, NULL);
 
 	if (count++ > 64)
 		exit(0);
@@ -86,9 +86,10 @@ int main(int argc, char **argv)
 		exit(0);
 	}
 
+	char *host_str 				= argv[1] ? argv[1] : "www.brbyte.com";
 	/* Fill up DNS configuration */
 	dns_conf.dns_ip_str			= argv[2] ? argv[2] : "8.8.8.8";
-	dns_conf.dns_port			= 53;
+	dns_conf.dns_port			= 8081;
 	dns_conf.lookup_timeout_ms	= 500;
 	dns_conf.retry_timeout_ms	= 50;
 	dns_conf.retry_count		= 10;
@@ -96,9 +97,7 @@ int main(int argc, char **argv)
 	glob_ev_dns		= CommEvDNSResolverBaseNew(glob_ev_base, &dns_conf);
 
 	/* Schedule new DNS query */
-	CommEvDNSGetHostByName(glob_ev_dns, "lic_elb.brbyte.com", DNSResolverCB, NULL);
-
-
+	CommEvDNSGetHostByName(glob_ev_dns, host_str, DNSResolverCB, NULL);
 
 	/* Jump into event loop */
 	EvKQBaseDispatch(glob_ev_base, 100);

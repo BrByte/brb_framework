@@ -217,7 +217,7 @@ static int UNIXEventsConnectEvent(int fd, int to_read_sz, int thrd_id, void *cb_
 
 	KQBASE_LOG_PRINTF(glob_log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "FD [%d] - SIZE [%d]\n", fd, to_read_sz);
 
-	if (COMM_UNIX_CLIENT_STATE_CONNECTED == unix_client->socket_state)
+	if (COMM_CLIENT_STATE_CONNECTED == unix_client->socket_state)
 	{
 		KQBASE_LOG_PRINTF(glob_log_base, LOGTYPE_INFO, LOGCOLOR_GREEN, "Connected to [%s] sending request\n", unix_client->server_path);
 		CommEvUNIXClientAIORawWriteStr(unix_client, "aaaaaaaaaaaaaaaaaaaa\n", NULL, NULL);
