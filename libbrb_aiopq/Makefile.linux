@@ -1,0 +1,47 @@
+INCLUDE = -I. -I ./include -I /include -I /usr/include -I /usr/include/kqueue -I /usr/local/include
+LDFLAGS = -shared -std=c99
+CFLAGS  = -O2 -g -Wno-comment $(AC_CFLAGS) $(INCLUDE) -D_GNU_SOURCE -fPIC -DIS_LINUX
+
+XTRA_LIBS 	= -lm -lbsd
+LIBS    	= -L. $(XTRA_LIBS) -L /usr/local/lib
+
+LIBRB_NAME	= libbrb_aiopq
+LIBRB_LIB	= $(LIBRB_NAME).a
+LIBRB_OBJS	= $(LIBRB_NAME).so
+
+LIBRB_INCLUDE=\
+		libbrb_aiopq.h \
+
+LIBRB_SRC=	\
+		libbrb_aiopq.c \
+		\
+
+OBJS 	= $(LIBRB_SRC:.c=.o)
+CFILES  = $(patsubst %.o,%.c,$(OBJS)) 
+	
+.PHONY: all
+all: $(LIBRB_NAME)
+
+$(OBJS):	Makefile
+
+$(LIBRB_NAME): $(OBJS)
+		$(CC) $(LDFLAGS) -o $(LIBRB_OBJS) $(OBJS) -lm
+		ar cru $(LIBRB_LIB) $(LIBRB_OBJS)
+
+$(SRCS:.c=.d):%.d:%.c
+	$(CC) $(CFLAGS) -MM $< >$@
+
+#include $(SRCS:.c=.d)
+
+.DONE:	query
+
+query:
+	-sbquery nosuchthing
+
+clean:
+	-rm -f $(OBJS) *.a *.o *.core $(LIBRB_LIB).so $(LIBRB_OBJS) $(SRCS:.c=.d)
+	
+install:
+	cp $(LIBRB_INCLUDE) /usr/local/include
+	cp $(LIBRB_LIB) /usr/local/lib
+	cp $(LIBRB_OBJS) /usr/local/lib
